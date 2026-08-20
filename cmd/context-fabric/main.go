@@ -387,6 +387,9 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		Snippets: snippets,
 	}
 	ing := &ingest.IntakeService{Ledger: ledger, Evidence: evidence}
+	if w, ok := authz.(ports.RelationshipWriter); ok {
+		ing.Authz = w
+	}
 	svc := &app.ApplicationService{
 		Identity: identity,
 		Authz:    authz,

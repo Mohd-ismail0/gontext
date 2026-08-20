@@ -506,7 +506,9 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 
 	ing := s.Ingest
 	if ing == nil {
-		ing = &ingest.IntakeService{Ledger: s.Ledger, Evidence: s.Evidence}
+		ing = &ingest.IntakeService{Ledger: s.Ledger, Evidence: s.Evidence, Authz: asRelationshipWriter(s.Authz)}
+	} else if ing.Authz == nil {
+		ing.Authz = asRelationshipWriter(s.Authz)
 	}
 
 	spec := req.Mapping
@@ -1168,6 +1170,13 @@ func joinComma(parts []string) string {
 		out += "," + parts[i]
 	}
 	return out
+}
+
+func asRelationshipWriter(authz ports.AuthorizationProvider) ports.RelationshipWriter {
+	if w, ok := authz.(ports.RelationshipWriter); ok {
+		return w
+	}
+	return nil
 }
 
 // memoryAuthzSeeder is implemented by in-process OpenFGA (demo/tests).

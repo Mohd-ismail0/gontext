@@ -26,29 +26,44 @@ type Spec struct {
 	Status         string         `json:"status"`
 	Description    string         `json:"description,omitempty"`
 	Mappings       FieldMappings  `json:"mappings"`
+	Edges          []EdgeMapping  `json:"edges,omitempty"`
 	Constraints    Constraints    `json:"constraints,omitempty"`
+}
+
+// EdgeMapping declares a knowledge-graph edge emitted on intake (ADR 0013).
+// Edges never grant access; SyncAuthzParent only mirrors OpenFGA parent inheritance.
+type EdgeMapping struct {
+	Predicate       *Expr `json:"predicate"`
+	From            *Expr `json:"from,omitempty"` // default: mapped resource_id
+	To              *Expr `json:"to"`
+	Confidence      *Expr `json:"confidence,omitempty"`
+	EnsureEndpoints *bool `json:"ensure_endpoints,omitempty"` // default true
+	SyncAuthzParent *bool `json:"sync_authz_parent,omitempty"` // default true when predicate=parent
 }
 
 // FieldMappings holds path/template expressions for canonical fields.
 type FieldMappings struct {
-	SourceExternalID  *Expr            `json:"source_external_id"`
-	SourceRevision    *Expr            `json:"source_revision"`
-	ContextSpaceID    *Expr            `json:"context_space_id"`
-	ResourceID        *Expr            `json:"resource_id"`
-	ResourceType      *Expr            `json:"resource_type"`
-	BrandID           *Expr            `json:"brand_id,omitempty"`
-	Timestamps        TimestampMappings `json:"timestamps"`
-	ContentLocator    *Expr            `json:"content_locator"`
-	ControlledTaxonomy map[string]*Expr `json:"controlled_taxonomy,omitempty"`
-	VisibilityRef     *Expr            `json:"visibility_ref,omitempty"`
-	Classification    *Expr            `json:"classification,omitempty"`
-	PurposeAllowlist  *Expr            `json:"purpose_allowlist,omitempty"`
-	Trust             *Expr            `json:"trust,omitempty"`
-	SourceAuthority   *Expr            `json:"source_authority,omitempty"`
-	RetentionPolicyID *Expr            `json:"retention_policy_id,omitempty"`
-	Tags              *Expr            `json:"tags,omitempty"`
-	OrganizationID    *Expr            `json:"organization_id,omitempty"`
-	Title             *Expr            `json:"title,omitempty"`
+	SourceExternalID   *Expr             `json:"source_external_id"`
+	SourceRevision     *Expr             `json:"source_revision"`
+	ContextSpaceID     *Expr             `json:"context_space_id"`
+	ResourceID         *Expr             `json:"resource_id"`
+	ResourceType       *Expr             `json:"resource_type"`
+	BrandID            *Expr             `json:"brand_id,omitempty"`
+	Timestamps         TimestampMappings `json:"timestamps"`
+	ContentLocator     *Expr             `json:"content_locator"`
+	ControlledTaxonomy map[string]*Expr  `json:"controlled_taxonomy,omitempty"`
+	VisibilityRef      *Expr             `json:"visibility_ref,omitempty"`
+	Classification     *Expr             `json:"classification,omitempty"`
+	PurposeAllowlist   *Expr             `json:"purpose_allowlist,omitempty"`
+	Trust              *Expr             `json:"trust,omitempty"`
+	SourceAuthority    *Expr             `json:"source_authority,omitempty"`
+	RetentionPolicyID  *Expr             `json:"retention_policy_id,omitempty"`
+	Tags               *Expr             `json:"tags,omitempty"`
+	OrganizationID     *Expr             `json:"organization_id,omitempty"`
+	Title              *Expr             `json:"title,omitempty"`
+	// ParentResourceID is a convenience mapping that emits predicate=parent
+	// from the mapped resource to this target (same as an edges[] entry).
+	ParentResourceID *Expr `json:"parent_resource_id,omitempty"`
 }
 
 // TimestampMappings maps occurred/observed timestamps.
@@ -103,7 +118,21 @@ type Canonical struct {
 	OccurredAt        time.Time
 	ObservedAt        time.Time
 	Attributes        map[string]string
+	Edges             []CanonicalEdge
 	DryRun            bool
+}
+
+// CanonicalEdge is a resolved knowledge-graph edge ready for ledger write.
+type CanonicalEdge struct {
+	FromID          string
+	ToID            string
+	Predicate       string
+	Confidence      float64
+	EnsureEndpoints bool
+	SyncAuthzParent bool
+	ToKind          string // hint when ensuring a stub endpoint
+	ToTitle         string
+	ToExternalID    string
 }
 
 // Options controls Apply behavior.
@@ -239,7 +268,171 @@ func Apply(spec Spec, payload map[string]any, ceilings SourceCeilings, opts Opti
 		out.Attributes["content_locator"] = out.ContentLocator
 	}
 
+	edges, err := resolveEdges(spec, payload, out)
+	if err != nil {
+		return Canonical{}, err
+	}
+	out.Edges = edges
+
 	return out, nil
+}
+
+func resolveEdges(spec Spec, payload map[string]any, out Canonical) ([]CanonicalEdge, error) {
+	var edges []CanonicalEdge
+	seen := map[string]bool{}
+
+	add := func(e CanonicalEdge) {
+		if e.FromID == "" || e.ToID == "" || e.Predicate == "" || e.FromID == e.ToID {
+			return
+		}
+		key := e.FromID + "|" + e.Predicate + "|" + e.ToID
+		if seen[key] {
+			return
+		}
+		seen[key] = true
+		if e.Confidence <= 0 {
+			e.Confidence = 1
+		}
+		edges = append(edges, e)
+	}
+
+	// Convenience parent_resource_id mapping.
+	if parentID, err := evalString(spec.Mappings.ParentResourceID, payload); err != nil {
+		return nil, err
+	} else if parentID != "" {
+		add(CanonicalEdge{
+			FromID:          out.ResourceID,
+			ToID:            parentID,
+			Predicate:       ports.EdgeParent,
+			Confidence:      1,
+			EnsureEndpoints: true,
+			SyncAuthzParent: true,
+			ToKind:          "container",
+		})
+	}
+
+	for i, em := range spec.Edges {
+		pred, err := evalString(em.Predicate, payload)
+		if err != nil {
+			return nil, fmt.Errorf("edges[%d].predicate: %w", i, err)
+		}
+		if pred == "" {
+			pred = ports.EdgeParent
+		}
+		fromID, err := evalString(em.From, payload)
+		if err != nil {
+			return nil, fmt.Errorf("edges[%d].from: %w", i, err)
+		}
+		if fromID == "" {
+			fromID = out.ResourceID
+		}
+		toID, err := evalString(em.To, payload)
+		if err != nil {
+			return nil, fmt.Errorf("edges[%d].to: %w", i, err)
+		}
+		if toID == "" {
+			continue
+		}
+		conf := 1.0
+		if em.Confidence != nil {
+			raw, err := evalString(em.Confidence, payload)
+			if err != nil {
+				return nil, fmt.Errorf("edges[%d].confidence: %w", i, err)
+			}
+			if raw != "" {
+				if f, err := strconv.ParseFloat(raw, 64); err == nil {
+					conf = f
+				}
+			}
+		}
+		ensure := true
+		if em.EnsureEndpoints != nil {
+			ensure = *em.EnsureEndpoints
+		}
+		syncParent := strings.EqualFold(pred, ports.EdgeParent)
+		if em.SyncAuthzParent != nil {
+			syncParent = *em.SyncAuthzParent
+		}
+		add(CanonicalEdge{
+			FromID:          fromID,
+			ToID:            toID,
+			Predicate:       strings.ToLower(pred),
+			Confidence:      conf,
+			EnsureEndpoints: ensure,
+			SyncAuthzParent: syncParent,
+		})
+	}
+
+	// Auto parent from visibility_ref when no explicit parent edge yet.
+	if out.VisibilityRef != "" {
+		hasParent := false
+		for _, e := range edges {
+			if e.Predicate == ports.EdgeParent && e.FromID == out.ResourceID {
+				hasParent = true
+				break
+			}
+		}
+		if !hasParent {
+			if pe, ok := edgeFromVisibilityRef(out.ResourceID, out.VisibilityRef); ok {
+				add(pe)
+			}
+		}
+	}
+
+	return edges, nil
+}
+
+// edgeFromVisibilityRef derives a parent edge from refs like "resource:<id>#viewer"
+// or "case:SUP-412#viewer" (stable uuid_v5 of the object key).
+func edgeFromVisibilityRef(resourceID, visibilityRef string) (CanonicalEdge, bool) {
+	ref := strings.TrimSpace(visibilityRef)
+	if ref == "" {
+		return CanonicalEdge{}, false
+	}
+	object := ref
+	if i := strings.IndexByte(ref, '#'); i >= 0 {
+		object = ref[:i]
+	}
+	object = strings.TrimSpace(object)
+	if object == "" {
+		return CanonicalEdge{}, false
+	}
+
+	var parentID, kind, title, external string
+	switch {
+	case strings.HasPrefix(object, "resource:"):
+		parentID = strings.TrimPrefix(object, "resource:")
+		kind = "resource"
+		title = parentID
+		external = object
+	default:
+		// kind:external_id → deterministic stub resource id
+		kind, external = object, object
+		if i := strings.IndexByte(object, ':'); i > 0 {
+			kind = object[:i]
+		}
+		parentID = uuidV5Hex(object)
+		title = object
+	}
+	if parentID == "" || parentID == resourceID {
+		return CanonicalEdge{}, false
+	}
+	return CanonicalEdge{
+		FromID:          resourceID,
+		ToID:            parentID,
+		Predicate:       ports.EdgeParent,
+		Confidence:      1,
+		EnsureEndpoints: true,
+		SyncAuthzParent: true,
+		ToKind:          kind,
+		ToTitle:         title,
+		ToExternalID:    external,
+	}, true
+}
+
+func uuidV5Hex(name string) string {
+	// Same namespace as MappingSpec transform "uuid_v5".
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
 }
 
 // ToRecord builds a ports.Record from mapped canonical fields.
@@ -572,6 +765,7 @@ func SpecFromPorts(m ports.MappingSpec) Spec {
 			VisibilityRef:    mk("visibility_ref"),
 			Title:            mk("title"),
 			OrganizationID:   mk("organization_id"),
+			ParentResourceID: mk("parent_resource_id"),
 			Timestamps: TimestampMappings{
 				OccurredAt: mk("occurred_at"),
 				ObservedAt: mk("observed_at"),

@@ -30,7 +30,9 @@ const (
 type IntakeService struct {
 	Ledger   ports.LedgerStore
 	Evidence ports.EvidenceStore
-	Now      func() time.Time
+	// Authz optionally mirrors parent knowledge edges into OpenFGA parent tuples.
+	Authz ports.RelationshipWriter
+	Now   func() time.Time
 }
 
 // Request is a single intake attempt.
@@ -59,6 +61,7 @@ type Result struct {
 	IdempotentReplay bool   `json:"idempotent_replay"`
 	EvidenceRef      string `json:"evidence_ref,omitempty"`
 	ContentHash      string `json:"content_hash,omitempty"`
+	EdgeCount        int    `json:"edge_count,omitempty"`
 }
 
 // Intake runs the generic ingestion path.
@@ -199,6 +202,7 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 			Status:         "accepted",
 			ContentHash:    contentHash,
 			EvidenceRef:    evidenceRef,
+			EdgeCount:      len(canonical.Edges),
 		}, nil
 	}
 
@@ -265,6 +269,9 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 		if err := s.Ledger.AppendRevision(ctx, tx, rev); err != nil {
 			return err
 		}
+		if err := s.writeEdges(ctx, tx, req.OrgID, rec.ResourceID, canonical.Edges, now); err != nil {
+			return err
+		}
 		if err := s.Ledger.EnqueueOutbox(ctx, tx, ports.OutboxEntry{
 			ID:      eventID,
 			OrgID:   req.OrgID,
@@ -304,6 +311,10 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 		return Result{}, err
 	}
 
+	if err := s.syncAuthzParents(ctx, canonical.Edges); err != nil {
+		return Result{}, err
+	}
+
 	return Result{
 		EventID:        eventID,
 		OrganizationID: req.OrgID,
@@ -312,6 +323,7 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 		Status:         "accepted",
 		EvidenceRef:    rev.EvidenceRef,
 		ContentHash:    rev.ContentHash,
+		EdgeCount:      len(canonical.Edges),
 	}, nil
 }
 
@@ -463,6 +475,110 @@ func preserveSoT(existing, incoming ports.Record) ports.Record {
 		}
 	}
 	return incoming
+}
+
+func (s *IntakeService) writeEdges(ctx context.Context, tx ports.Tx, orgID, seedResourceID string, edges []mapping.CanonicalEdge, now time.Time) error {
+	known := map[string]bool{}
+	if seedResourceID != "" {
+		known[seedResourceID] = true
+	}
+	for _, e := range edges {
+		if e.EnsureEndpoints {
+			if !known[e.FromID] {
+				if err := s.ensureEndpoint(ctx, tx, orgID, e.FromID, "resource", e.FromID, "", now); err != nil {
+					return err
+				}
+				known[e.FromID] = true
+			}
+			if !known[e.ToID] {
+				kind := e.ToKind
+				if kind == "" {
+					kind = "resource"
+				}
+				if err := s.ensureEndpoint(ctx, tx, orgID, e.ToID, kind, e.ToTitle, e.ToExternalID, now); err != nil {
+					return err
+				}
+				known[e.ToID] = true
+			}
+		}
+		edge := ports.GraphEdge{
+			EdgeID:     deterministicEdgeID(orgID, e.FromID, e.ToID, e.Predicate),
+			OrgID:      orgID,
+			FromID:     e.FromID,
+			ToID:       e.ToID,
+			Predicate:  e.Predicate,
+			Confidence: e.Confidence,
+			State:      "ACTIVE",
+			Attributes: map[string]string{"source": "mapping"},
+			CreatedAt:  now,
+			UpdatedAt:  now,
+		}
+		if err := s.Ledger.UpsertEdge(ctx, tx, edge); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *IntakeService) ensureEndpoint(ctx context.Context, tx ports.Tx, orgID, resourceID, kind, title, externalID string, now time.Time) error {
+	if resourceID == "" {
+		return nil
+	}
+	if _, err := s.Ledger.GetRecord(ctx, orgID, resourceID); err == nil {
+		return nil
+	} else if platform.IsAPIError(err) {
+		ae, _ := platform.AsAPIError(err)
+		if ae == nil || ae.HTTPStatus != 404 {
+			return err
+		}
+	} else {
+		return err
+	}
+	if title == "" {
+		title = resourceID
+	}
+	if kind == "" {
+		kind = "resource"
+	}
+	rec := ports.Record{
+		ResourceID:     resourceID,
+		OrgID:          orgID,
+		Kind:           kind,
+		Title:          title,
+		Classification: "internal",
+		ExternalID:     externalID,
+		State:          "ENSURED",
+		Attributes:     map[string]string{"ensured": "true"},
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	return s.Ledger.UpsertRecord(ctx, tx, rec)
+}
+
+func (s *IntakeService) syncAuthzParents(ctx context.Context, edges []mapping.CanonicalEdge) error {
+	if s.Authz == nil || len(edges) == 0 {
+		return nil
+	}
+	tuples := make([]ports.RelationshipTuple, 0, len(edges))
+	for _, e := range edges {
+		if !e.SyncAuthzParent || e.Predicate != ports.EdgeParent {
+			continue
+		}
+		tuples = append(tuples, ports.RelationshipTuple{
+			Object:   "resource:" + e.FromID,
+			Relation: "parent",
+			Subject:  "resource:" + e.ToID,
+		})
+	}
+	if len(tuples) == 0 {
+		return nil
+	}
+	return s.Authz.WriteTuples(ctx, tuples)
+}
+
+func deterministicEdgeID(orgID, fromID, toID, predicate string) string {
+	sum := sha256.Sum256([]byte(orgID + "|" + fromID + "|" + predicate + "|" + toID))
+	return "edge_" + hex.EncodeToString(sum[:12])
 }
 
 func firstNonEmpty(vals ...string) string {

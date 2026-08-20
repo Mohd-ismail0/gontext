@@ -4,8 +4,9 @@ Connectors must use only public Context Fabric APIs:
 
 1. Register a source (`POST .../context/sources`) with trust/authority ceilings and schema versions.
 2. Bind a versioned `MappingSpec` (see `contracts/jsonschema/mapping-spec.json`).
-3. Upload evidence via presigned URLs when needed.
-4. Submit signed CloudEvents to `POST .../context/intake` (or batch).
+3. Emit knowledge-graph edges via `mappings.parent_resource_id`, top-level `edges[]`, or `visibility_ref` (auto parent). Edges are facts; only `parent` may sync OpenFGA inheritance.
+4. Upload evidence via presigned URLs when needed.
+5. Submit signed CloudEvents to `POST .../context/intake` (or batch).
 
 ## Rules
 

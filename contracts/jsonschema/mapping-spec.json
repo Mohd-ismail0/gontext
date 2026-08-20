@@ -147,6 +147,44 @@
         },
         "tags": {
           "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "parent_resource_id": {
+          "$ref": "#/$defs/JsonPathOrTemplate",
+          "description": "Convenience mapping: emits a knowledge parent edge from the mapped resource to this target. Does not grant ACL by itself; when sync_authz_parent is enabled (default for parent), an OpenFGA parent tuple is also written."
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "description": "Knowledge-graph edges emitted on each accepted intake (ADR 0013). Edges are facts, not grants. An edge is only visible later if both endpoints pass can_read.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["predicate", "to"],
+        "properties": {
+          "predicate": {
+            "$ref": "#/$defs/JsonPathOrTemplate",
+            "description": "Edge type: parent, related_to, mentions, derived_from, assigned_to, …"
+          },
+          "from": {
+            "$ref": "#/$defs/JsonPathOrTemplate",
+            "description": "Defaults to the mapped resource_id."
+          },
+          "to": {
+            "$ref": "#/$defs/JsonPathOrTemplate"
+          },
+          "confidence": {
+            "$ref": "#/$defs/JsonPathOrTemplate"
+          },
+          "ensure_endpoints": {
+            "type": "boolean",
+            "default": true,
+            "description": "Upsert stub nodes for missing endpoints so FK-safe edges can be written."
+          },
+          "sync_authz_parent": {
+            "type": "boolean",
+            "description": "When predicate resolves to parent (default true), also write OpenFGA parent tuple for ACL inheritance. Never used for related_to/mentions."
+          }
         }
       }
     },

@@ -43,6 +43,17 @@ func (m *Memory) Grant(object, relation, subject string) {
 	m.Relations[object][relation][subject] = true
 }
 
+// WriteTuples implements ports.RelationshipWriter.
+func (m *Memory) WriteTuples(_ context.Context, tuples []ports.RelationshipTuple) error {
+	for _, t := range tuples {
+		if t.Object == "" || t.Relation == "" || t.Subject == "" {
+			continue
+		}
+		m.Grant(t.Object, t.Relation, t.Subject)
+	}
+	return nil
+}
+
 // AddOrgMember marks a principal as an organization member.
 func (m *Memory) AddOrgMember(orgID, subject string) {
 	m.mu.Lock()

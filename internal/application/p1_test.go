@@ -40,7 +40,7 @@ func newP1Svc(t *testing.T) (*app.ApplicationService, *memory.Store, string, por
 	svc := &app.ApplicationService{
 		Identity: identity, Authz: authz, Policy: policy.New(),
 		Ledger: store, Evidence: ev, Index: idx, Audit: auditLog,
-		Retrieve: pipe, Ingest: &ingest.IntakeService{Ledger: store, Evidence: ev},
+		Retrieve: pipe, Ingest: &ingest.IntakeService{Ledger: store, Evidence: ev, Authz: authz},
 		Changes: store, Extras: store, ChangeFeed: changes.New(store, []byte("p1-wh")),
 		Mappings: store,
 		MappingBySource: func(ctx context.Context, orgID, sourceID string) (mapping.Spec, error) {

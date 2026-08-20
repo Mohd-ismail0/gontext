@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/xsama/context-fabric/internal/adapters/memory"
+	"github.com/xsama/context-fabric/internal/adapters/openfga"
 	"github.com/xsama/context-fabric/internal/ingest"
 	"github.com/xsama/context-fabric/internal/mapping"
 	"github.com/xsama/context-fabric/internal/platform"
@@ -117,6 +118,120 @@ func TestDuplicateIntakeIdempotent(t *testing.T) {
 		t.Fatalf("replay mismatch: %+v vs %+v", r1, r2)
 	}
 }
+
+func TestIntakeEmitsParentEdgeFromVisibilityRef(t *testing.T) {
+	svc, ledger, src := setup(t)
+	authz := openfga.NewMemory()
+	svc.Authz = authz
+	payload := map[string]any{
+		"data": map[string]any{
+			"source_external_id": "ext-edge-1",
+			"source_revision":    "r1",
+			"resource_id":        "res-msg-1",
+			"resource_type":      "message",
+			"classification":     "internal",
+			"trust":              "trusted_internal",
+			"source_authority":   "corroborating",
+			"visibility_ref":     "case:1#viewer",
+			"title":              "Hello",
+		},
+	}
+	res, err := svc.Intake(context.Background(), signedReq(t, src.SigningSecret, payload, "idem-edge-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.EdgeCount != 1 {
+		t.Fatalf("expected 1 edge, got %d", res.EdgeCount)
+	}
+	edges, err := ledger.ListEdges(context.Background(), "org1", ports.EdgeListOptions{
+		ResourceIDs: []string{"res-msg-1"},
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].Predicate != ports.EdgeParent || edges[0].FromID != "res-msg-1" {
+		t.Fatalf("unexpected edges: %#v", edges)
+	}
+	parentID := edges[0].ToID
+	if _, err := ledger.GetRecord(context.Background(), "org1", parentID); err != nil {
+		t.Fatalf("expected ensured parent stub: %v", err)
+	}
+	// OpenFGA parent tuple synced for inheritance.
+	dec, err := authz.Check(context.Background(), ports.AuthzCheck{
+		Principal:  ports.Principal{Kind: ports.PrincipalKindUser, Subject: "alice", OrgID: "org1"},
+		Action:     "can_read",
+		ResourceID: "res-msg-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without grants on parent, child alone has no can_read — tuple exists but no reader yet.
+	_ = dec
+	authz.Grant("resource:"+parentID, "can_read", "user:alice")
+	dec, err = authz.Check(context.Background(), ports.AuthzCheck{
+		Principal:  ports.Principal{Kind: ports.PrincipalKindUser, Subject: "alice", OrgID: "org1"},
+		Action:     "can_read",
+		ResourceID: "res-msg-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dec.Allowed {
+		t.Fatal("child should inherit can_read via synced parent tuple")
+	}
+}
+
+func TestIntakeExplicitEdgesAndParentResourceID(t *testing.T) {
+	svc, ledger, src := setup(t)
+	req := signedReq(t, src.SigningSecret, map[string]any{
+		"data": map[string]any{
+			"source_external_id":  "ext-edge-2",
+			"source_revision":     "r1",
+			"resource_id":         "res-msg-2",
+			"resource_type":       "message",
+			"classification":      "internal",
+			"trust":               "trusted_internal",
+			"source_authority":    "corroborating",
+			"visibility_ref":      "case:1#viewer",
+			"title":               "Hello",
+			"parent_resource_id":  "res-case-explicit",
+			"mentioned_person_id": "res-person-9",
+		},
+	}, "idem-edge-2")
+	req.Mapping.Mappings.ParentResourceID = &mapping.Expr{Expr: "$.data.parent_resource_id"}
+	req.Mapping.Edges = []mapping.EdgeMapping{{
+		Predicate:       &mapping.Expr{Expr: `"mentions"`},
+		To:              &mapping.Expr{Expr: "$.data.mentioned_person_id"},
+		SyncAuthzParent: boolPtr(false),
+	}}
+	res, err := svc.Intake(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.EdgeCount != 2 {
+		t.Fatalf("expected parent+mentions (visibility auto suppressed), got %d", res.EdgeCount)
+	}
+	edges, err := ledger.ListEdges(context.Background(), "org1", ports.EdgeListOptions{
+		ResourceIDs: []string{"res-msg-2"},
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preds := map[string]string{}
+	for _, e := range edges {
+		preds[e.Predicate] = e.ToID
+	}
+	if preds[ports.EdgeParent] != "res-case-explicit" {
+		t.Fatalf("parent edge: %#v", preds)
+	}
+	if preds[ports.EdgeMentions] != "res-person-9" {
+		t.Fatalf("mentions edge: %#v", preds)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }
 
 func TestMappingCannotBroadenTrust(t *testing.T) {
 	svc, _, src := setup(t)

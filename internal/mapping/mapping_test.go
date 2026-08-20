@@ -58,6 +58,52 @@ func TestApplyMapsFields(t *testing.T) {
 	}
 }
 
+func TestApplyEmitsEdgesFromVisibilityAndParent(t *testing.T) {
+	spec := mapping.Spec{
+		OrganizationID: "org1",
+		Mappings: mapping.FieldMappings{
+			SourceExternalID: &mapping.Expr{Expr: `"ext"`},
+			SourceRevision:   &mapping.Expr{Expr: `"r1"`},
+			ContextSpaceID:   &mapping.Expr{Expr: `"cs"`},
+			ResourceID:       &mapping.Expr{Expr: `"res-child"`},
+			ResourceType:     &mapping.Expr{Expr: `"message"`},
+			ContentLocator:   &mapping.Expr{Expr: `"ev://1"`},
+			Classification:   &mapping.Expr{Expr: `"internal"`},
+			Trust:            &mapping.Expr{Expr: `"trusted_internal"`},
+			SourceAuthority:  &mapping.Expr{Expr: `"corroborating"`},
+			VisibilityRef:    &mapping.Expr{Expr: `"case:SUP-1#viewer"`},
+			ParentResourceID: &mapping.Expr{Expr: `"res-parent"`},
+			Timestamps:       mapping.TimestampMappings{},
+		},
+		Edges: []mapping.EdgeMapping{{
+			Predicate: &mapping.Expr{Expr: `"mentions"`},
+			To:        &mapping.Expr{Expr: `"res-person"`},
+		}},
+	}
+	got, err := mapping.Apply(spec, map[string]any{}, mapping.SourceCeilings{
+		OrganizationID:        "org1",
+		TrustCeiling:          "trusted_system",
+		AuthorityCeiling:      "source_of_truth",
+		ClassificationCeiling: "confidential",
+	}, mapping.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Edges) != 2 {
+		t.Fatalf("expected parent+mentions (visibility suppressed), got %#v", got.Edges)
+	}
+	preds := map[string]bool{}
+	for _, e := range got.Edges {
+		preds[e.Predicate] = true
+		if e.FromID != "res-child" {
+			t.Fatalf("from: %s", e.FromID)
+		}
+	}
+	if !preds["parent"] || !preds["mentions"] {
+		t.Fatalf("preds: %#v", preds)
+	}
+}
+
 func TestRejectOrgMismatch(t *testing.T) {
 	spec := mapping.Spec{
 		OrganizationID: "org1",

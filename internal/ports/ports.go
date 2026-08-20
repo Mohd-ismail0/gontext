@@ -19,6 +19,18 @@ type AuthorizationProvider interface {
 	ResolveCandidateScope(ctx context.Context, req ScopeResolve) (CandidateScope, error)
 }
 
+// RelationshipWriter persists AuthZ relationship tuples (optional; demo/memory or OpenFGA write API).
+type RelationshipWriter interface {
+	WriteTuples(ctx context.Context, tuples []RelationshipTuple) error
+}
+
+// RelationshipTuple is one OpenFGA-shaped relationship.
+type RelationshipTuple struct {
+	Object   string `json:"object"`
+	Relation string `json:"relation"`
+	Subject  string `json:"user"`
+}
+
 // PolicyProvider applies deterministic disclosure/redaction/purpose obligations.
 // It never grants access; callers must already have an AuthZ allow.
 type PolicyProvider interface {

@@ -59,6 +59,7 @@ func TestE2EMemoryHappyPathAndRevoke(t *testing.T) {
 	intakeSvc := &ingest.IntakeService{
 		Ledger:   store,
 		Evidence: ev,
+		Authz:    authz,
 		Now:      func() time.Time { return fixedNow },
 	}
 	delSvc := &deletion.Service{

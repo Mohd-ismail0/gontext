@@ -22,11 +22,20 @@
     "source_authority": { "expr": "$.data.source_authority", "default": "corroborating" },
     "visibility_ref": { "expr": "$.data.visibility_ref" },
     "title": { "expr": "$.data.title" },
+    "parent_resource_id": { "expr": "$.data.parent_resource_id" },
     "controlled_taxonomy": {
       "channel": { "expr": "\"chatwoot\"" },
       "domain": { "expr": "\"support\"" }
     }
   },
+  "edges": [
+    {
+      "predicate": { "expr": "\"mentions\"" },
+      "to": { "expr": "$.data.mentioned_resource_id" },
+      "ensure_endpoints": true,
+      "sync_authz_parent": false
+    }
+  ],
   "constraints": {
     "cannot_mint_organization": true,
     "cannot_broaden_acl": true,

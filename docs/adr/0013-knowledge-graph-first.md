@@ -18,12 +18,13 @@ OpenFGA already models resource `parent` inheritance for `can_read` / `can_manag
 4. **Edge visibility rule:** an edge is returned only when **both** endpoints are independently allowed for the caller. Knowing that A→B exists must not leak the existence of a denied node.
 5. **Traversal is AuthZ-first:** resolve candidates → expand edge frontier with hard caps (`depth`, `max_nodes`) → `BatchCheck` every node → hydrate → apply policy. Never hydrate then filter; never trust client-supplied edge sets.
 6. **OpenFGA `parent` remains the ACL inheritance edge.** When a knowledge `parent` edge is written, operators/connectors SHOULD also write the matching OpenFGA `parent` tuple so inheritance stays consistent. Knowledge `related_to` / `mentions` never imply AuthZ.
-7. **All read surfaces are graph queries.** `search`, `get`, `brief`, and `graph` return a `ContextPacket` that includes `nodes` and `edges` (plus citations for retrieval UX). Search is “ranked entry points into your visible subgraph.”
-8. **External temporal graph engines (e.g. Graphiti) stay optional projections** rebuilt from the ledger; they are not the source of truth or of authorization.
+7. **Connectors and MappingSpec emit edges on intake** via `edges[]`, `parent_resource_id`, or auto-parent from `visibility_ref`. Missing endpoints may be stub-ensured; `parent` may sync an OpenFGA inheritance tuple (never a direct reader grant).
+8. **All read surfaces are graph queries.** `search`, `get`, `brief`, and `graph` return a `ContextPacket` that includes `nodes` and `edges` (plus citations for retrieval UX). Search is “ranked entry points into your visible subgraph.”
+9. **External temporal graph engines (e.g. Graphiti) stay optional projections** rebuilt from the ledger; they are not the source of truth or of authorization.
 
 ## Consequences
 
 - Product language and APIs treat context as a governed subgraph, not a document search box.
-- Connectors and MappingSpec gain an explicit path to emit edges alongside records.
+- Connectors and MappingSpec grow the graph on every accepted event.
 - MCP/REST grow a neighborhood/`graph` tool without forking AuthZ semantics.
 - Tests must prove denied neighbors are omitted (no stubs that leak titles/IDs) and that tags/labels never widen node access.
