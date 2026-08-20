@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/xsama/context-fabric/internal/authzsync"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -42,12 +43,12 @@ type Manifest struct {
 	Contents       []ContentEntry    `json:"contents"`
 	SchemaVersions map[string]string `json:"schema_versions,omitempty"`
 	// Embedded payloads for memory/demo round-trip (never include secrets).
-	Records      []ports.Record             `json:"records,omitempty"`
-	Revisions    []ports.Revision           `json:"revisions,omitempty"`
-	Sources      []ports.SourceRegistration `json:"sources,omitempty"`
-	Tombstones   []Tombstone                `json:"tombstones,omitempty"`
-	GraphEdges   []ports.GraphEdge          `json:"graph_edges,omitempty"`
-	AuthzTuples  []AuthzTupleManifest       `json:"authz_tuples,omitempty"`
+	Records     []ports.Record             `json:"records,omitempty"`
+	Revisions   []ports.Revision           `json:"revisions,omitempty"`
+	Sources     []ports.SourceRegistration `json:"sources,omitempty"`
+	Tombstones  []Tombstone                `json:"tombstones,omitempty"`
+	GraphEdges  []ports.GraphEdge          `json:"graph_edges,omitempty"`
+	AuthzTuples []AuthzTupleManifest       `json:"authz_tuples,omitempty"`
 }
 
 // AuthzTupleManifest is a portable AuthZ relationship required by sync_authz parent edges.
@@ -175,11 +176,11 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		Status:         "completed",
 		Contents:       contents,
 		SchemaVersions: map[string]string{
-			"record":       "context-fabric.record/v1",
-			"export":       FormatVersion,
-			"packet":       "context-fabric.packet/v1",
-			"graph_edge":   "context-fabric.graph-edge/v1",
-			"authz_tuple":  "context-fabric.authz-tuple/v1",
+			"record":      "context-fabric.record/v1",
+			"export":      FormatVersion,
+			"packet":      "context-fabric.packet/v1",
+			"graph_edge":  "context-fabric.graph-edge/v1",
+			"authz_tuple": "context-fabric.authz-tuple/v1",
 		},
 		Records:     records,
 		Revisions:   revisions,
@@ -241,21 +242,9 @@ func (s *Service) ImportInto(ctx context.Context, targetOrgID string, m Manifest
 			if err := s.Ledger.UpsertEdge(ctx, tx, e); err != nil {
 				return err
 			}
-			if e.State == "ACTIVE" && e.SyncAuthz && e.Predicate == ports.EdgeParent {
+			if e.State == "ACTIVE" {
 				now := s.now()
-				if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
-					ID:          platform.NewEventID(),
-					OrgID:       targetOrgID,
-					Operation:   "write",
-					Object:      "resource:" + e.FromID,
-					Relation:    "parent",
-					Subject:     "resource:" + e.ToID,
-					EdgeID:      e.EdgeID,
-					Status:      "pending",
-					CreatedAt:   now,
-					UpdatedAt:   now,
-					NextAttempt: now,
-				}); err != nil {
+				if err := authzsync.EnqueueForEdge(ctx, s.Ledger, tx, e, authzsync.OperationWrite, now); err != nil {
 					return err
 				}
 			}
