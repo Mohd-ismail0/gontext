@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"strings"
 	"time"
 
 	"github.com/xsama/context-fabric/internal/audit"
@@ -31,6 +34,8 @@ type ApplicationService struct {
 	Ingest   *ingest.IntakeService
 	Build    VersionInfo
 	Ready    func() bool
+	// ReadyDetail, when set, supplies OpenAPI ReadyStatus checks (migrations, authz, …).
+	ReadyDetail func() (ready bool, checks map[string]any)
 
 	// Optional extended store methods (memory/postgres).
 	Changes ChangeLister
@@ -46,6 +51,15 @@ type ApplicationService struct {
 
 	// MappingBySource optionally resolves MappingSpec by source id.
 	MappingBySource func(ctx context.Context, orgID, sourceID string) (mapping.Spec, error)
+
+	// Mappings persists/loads MappingSpec by source.
+	Mappings MappingStore
+}
+
+// MappingStore persists MappingSpec documents keyed by source.
+type MappingStore interface {
+	PutMappingSpec(ctx context.Context, orgID, sourceID string, spec mapping.Spec) error
+	GetMappingSpec(ctx context.Context, orgID, sourceID string) (mapping.Spec, error)
 }
 
 // VersionInfo is returned by Version().
@@ -73,6 +87,7 @@ type QuotaStore interface {
 // ExtraStore holds webhooks/access/export helpers used by memory adapter.
 type ExtraStore interface {
 	ListAudit(ctx context.Context, orgID string, limit int) ([]ports.AuditEvent, error)
+	PutAccessRequest(ctx context.Context, orgID, requestID, resourceID, purpose, justification, auditID string) error
 }
 
 // ExportJobStore persists export job manifests.
@@ -171,6 +186,9 @@ func (s *ApplicationService) RequestAccess(ctx context.Context, creds ports.Cred
 	if err != nil {
 		return nil, err
 	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
 	id := platform.NewEventID()
 	auditID := platform.NewEventID()
 	_ = s.Audit.Append(ctx, ports.AuditEvent{
@@ -178,19 +196,26 @@ func (s *ApplicationService) RequestAccess(ctx context.Context, creds ports.Cred
 		Action: "context.request_access", ReasonCode: "ACCESS_REQUEST_PENDING", CreatedAt: time.Now().UTC(),
 		Attributes: map[string]string{"resource_id": resourceID, "purpose": purpose},
 	})
-	_ = justification
+	if s.Extras != nil {
+		_ = s.Extras.PutAccessRequest(ctx, orgID, id, resourceID, purpose, justification, auditID)
+	}
 	return map[string]any{
-		"request_id":  id,
-		"status":      "pending",
-		"resource_id": resourceID,
-		"purpose":     purpose,
-		"created_at":  time.Now().UTC(),
-		"audit_id":    auditID,
+		"request_id":    id,
+		"status":        "pending",
+		"resource_id":   resourceID,
+		"purpose":       purpose,
+		"justification": justification,
+		"created_at":    time.Now().UTC(),
+		"audit_id":      auditID,
 	}, nil
 }
 
 func (s *ApplicationService) RegisterSource(ctx context.Context, creds ports.Credentials, orgID string, src ports.SourceRegistration) (ports.SourceRegistration, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return ports.SourceRegistration{}, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return ports.SourceRegistration{}, err
 	}
 	if src.SourceID == "" {
@@ -218,27 +243,190 @@ func (s *ApplicationService) RegisterSource(ctx context.Context, creds ports.Cre
 		}
 		src.Attributes["signing_secret"] = src.SigningSecret
 	}
-	err := s.Ledger.WithOrgTx(ctx, orgID, func(ctx context.Context, tx ports.Tx) error {
+
+	var inline *mapping.Spec
+	if len(src.MappingSpecInline) > 0 {
+		spec, err := mapping.ParseSpec(src.MappingSpecInline)
+		if err != nil {
+			return ports.SourceRegistration{}, err
+		}
+		if spec.ID == "" {
+			spec.ID = src.MappingSpec
+		}
+		if spec.ID == "" {
+			spec.ID = src.SourceID
+		}
+		if src.MappingSpec == "" {
+			src.MappingSpec = spec.ID
+		}
+		spec.OrganizationID = orgID
+		spec.SourceID = src.SourceID
+		inline = &spec
+	}
+
+	inlineBytes := src.MappingSpecInline
+	src.MappingSpecInline = nil
+	err = s.Ledger.WithOrgTx(ctx, orgID, func(ctx context.Context, tx ports.Tx) error {
 		return s.Ledger.UpsertSource(ctx, tx, src)
 	})
-	return src, err
+	if err != nil {
+		return ports.SourceRegistration{}, err
+	}
+	if inline != nil {
+		if s.Mappings != nil {
+			_ = s.Mappings.PutMappingSpec(ctx, orgID, src.SourceID, *inline)
+		} else if putter, ok := s.Ledger.(MappingStore); ok {
+			_ = putter.PutMappingSpec(ctx, orgID, src.SourceID, *inline)
+		}
+	}
+	// Return signing_secret once on create; strip inline mapping blob.
+	src.MappingSpecInline = nil
+	_ = inlineBytes
+	return src, nil
 }
 
 func (s *ApplicationService) VerifySource(ctx context.Context, creds ports.Credentials, orgID, sourceID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	src, err := s.Ledger.GetSource(ctx, orgID, sourceID)
 	if err != nil {
 		return nil, err
 	}
+	secret := src.SigningSecret
+	if secret == "" && src.Attributes != nil {
+		secret = src.Attributes["signing_secret"]
+	}
+	checkedAt := time.Now().UTC()
+	if secret == "" {
+		return map[string]any{
+			"source_id":  src.SourceID,
+			"system":     src.System,
+			"enabled":    src.Enabled,
+			"status":     "failed",
+			"reason_code": "missing_signing_secret",
+			"detail":     "signing_secret is empty",
+			"checked_at": checkedAt,
+		}, nil
+	}
+	probe := []byte("context-fabric-verify-probe")
+	sig := ingest.SignHMAC(secret, probe)
+	if err := ingest.VerifyHMAC(secret, probe, sig); err != nil {
+		return map[string]any{
+			"source_id":   src.SourceID,
+			"system":      src.System,
+			"enabled":     src.Enabled,
+			"status":      "failed",
+			"reason_code": "hmac_self_test_failed",
+			"detail":      err.Error(),
+			"checked_at":  checkedAt,
+		}, nil
+	}
 	return map[string]any{
-		"source_id": src.SourceID,
-		"system":    src.System,
-		"enabled":   src.Enabled,
-		"status":    "verified",
-		"checked_at": time.Now().UTC(),
+		"source_id":  src.SourceID,
+		"system":     src.System,
+		"enabled":    src.Enabled,
+		"status":     "ok",
+		"checked_at": checkedAt,
 	}, nil
+}
+
+func (s *ApplicationService) ListSources(ctx context.Context, creds ports.Credentials, orgID string) ([]ports.SourceRegistration, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	items, err := s.Ledger.ListSources(ctx, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i] = redactSource(items[i])
+	}
+	return items, nil
+}
+
+func (s *ApplicationService) GetSource(ctx context.Context, creds ports.Credentials, orgID, sourceID string) (ports.SourceRegistration, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return ports.SourceRegistration{}, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return ports.SourceRegistration{}, err
+	}
+	src, err := s.Ledger.GetSource(ctx, orgID, sourceID)
+	if err != nil {
+		return ports.SourceRegistration{}, err
+	}
+	return redactSource(src), nil
+}
+
+func (s *ApplicationService) RotateSourceSecret(ctx context.Context, creds ports.Credentials, orgID, sourceID string) (map[string]any, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	src, err := s.Ledger.GetSource(ctx, orgID, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := randomSigningSecret()
+	if err != nil {
+		return nil, err
+	}
+	keyID := platform.NewEventID()
+	if src.Attributes == nil {
+		src.Attributes = map[string]string{}
+	}
+	src.Attributes["signing_secret"] = secret
+	src.Attributes["signing_key_id"] = keyID
+	src.SigningSecret = secret
+	src.UpdatedAt = time.Now().UTC()
+	err = s.Ledger.WithOrgTx(ctx, orgID, func(ctx context.Context, tx ports.Tx) error {
+		return s.Ledger.UpsertSource(ctx, tx, src)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"source_id":   src.SourceID,
+		"key_id":      keyID,
+		"secret_once": secret,
+	}, nil
+}
+
+func redactSource(src ports.SourceRegistration) ports.SourceRegistration {
+	src.SigningSecret = ""
+	src.MappingSpecInline = nil
+	if src.Attributes != nil {
+		attrs := make(map[string]string, len(src.Attributes))
+		for k, v := range src.Attributes {
+			if k == "signing_secret" {
+				continue
+			}
+			attrs[k] = v
+		}
+		src.Attributes = attrs
+	}
+	return src
+}
+
+func randomSigningSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "cfsrc_" + hex.EncodeToString(b), nil
 }
 
 // IntakeRequest is the HTTP/gateway intake envelope.
@@ -256,7 +444,11 @@ type IntakeRequest struct {
 }
 
 func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials, orgID string, req IntakeRequest) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.Quota != nil {
@@ -308,24 +500,33 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 
 	if !result.Duplicate && !req.DryRun {
 		if s.ChangeFeed != nil {
-			_ = s.ChangeFeed.Append(ctx, ports.ChangeEvent{
+			if err := s.ChangeFeed.Append(ctx, ports.ChangeEvent{
 				EventID: platform.NewEventID(), OrgID: orgID, ResourceID: result.ResourceID,
 				RevisionID: result.RevisionID, Action: "resource.accepted", Cursor: result.RevisionID, OccurredAt: time.Now().UTC(),
-			})
+			}); err != nil {
+				return nil, platform.ErrUnavailable("change feed append failed: " + err.Error())
+			}
 		} else if s.Changes != nil {
-			_ = s.Changes.AppendChange(ctx, ports.ChangeEvent{
+			if err := s.Changes.AppendChange(ctx, ports.ChangeEvent{
 				EventID: platform.NewEventID(), OrgID: orgID, ResourceID: result.ResourceID,
 				RevisionID: result.RevisionID, Action: "upsert", Cursor: result.RevisionID, OccurredAt: time.Now().UTC(),
-			})
+			}); err != nil {
+				return nil, platform.ErrUnavailable("change append failed: " + err.Error())
+			}
 		}
 		if s.Index != nil && result.ResourceID != "" {
-			rec, _ := s.Ledger.GetRecord(ctx, orgID, result.ResourceID)
-			_ = s.Index.Upsert(ctx, []ports.IndexDocument{{
+			rec, err := s.Ledger.GetRecord(ctx, orgID, result.ResourceID)
+			if err != nil {
+				return nil, platform.ErrUnavailable("index load record failed: " + err.Error())
+			}
+			if err := s.Index.Upsert(ctx, []ports.IndexDocument{{
 				ResourceID: result.ResourceID, RevisionID: result.RevisionID, OrgID: orgID,
 				Text: rec.Title, Labels: rec.Labels, Attributes: map[string]string{
 					"classification": rec.Classification, "purpose_allowlist": "support",
 				},
-			}})
+			}}); err != nil {
+				return nil, platform.ErrUnavailable("index upsert failed: " + err.Error())
+			}
 		}
 	}
 
@@ -340,8 +541,51 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 	}, nil
 }
 
+// IntakeBatch accepts multiple CloudEvents and returns per-event results.
+func (s *ApplicationService) IntakeBatch(ctx context.Context, creds ports.Credentials, orgID string, reqs []IntakeRequest) (map[string]any, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	results := make([]map[string]any, 0, len(reqs))
+	accepted, rejected := 0, 0
+	for _, req := range reqs {
+		out, err := s.Intake(ctx, creds, orgID, req)
+		if err != nil {
+			rejected++
+			ae, ok := platform.AsAPIError(err)
+			item := map[string]any{"status": "rejected", "organization_id": orgID}
+			if ok {
+				item["reason_code"] = ae.ReasonCode
+				item["message"] = ae.Message
+			} else {
+				item["message"] = err.Error()
+			}
+			if req.Event.EventID != "" {
+				item["event_id"] = req.Event.EventID
+			}
+			results = append(results, item)
+			continue
+		}
+		accepted++
+		results = append(results, out)
+	}
+	return map[string]any{
+		"results":         results,
+		"accepted_count":  accepted,
+		"rejected_count":  rejected,
+	}, nil
+}
+
 func (s *ApplicationService) PresignEvidence(ctx context.Context, creds ports.Credentials, orgID, key, contentType string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	url, exp, err := s.Evidence.PresignPut(ctx, orgID+"/"+key, ports.PresignOptions{ContentType: contentType, ExpiresIn: 15 * time.Minute})
@@ -352,7 +596,11 @@ func (s *ApplicationService) PresignEvidence(ctx context.Context, creds ports.Cr
 }
 
 func (s *ApplicationService) ListChanges(ctx context.Context, creds ports.Credentials, orgID, cursor string, limit int) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed != nil {
@@ -373,7 +621,11 @@ func (s *ApplicationService) ListChanges(ctx context.Context, creds ports.Creden
 }
 
 func (s *ApplicationService) ManageWebhooks(ctx context.Context, creds ports.Credentials, orgID string, action string, body map[string]any) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed == nil {
@@ -395,6 +647,8 @@ func (s *ApplicationService) ManageWebhooks(ctx context.Context, creds ports.Cre
 		if err != nil {
 			return nil, err
 		}
+		// Best-effort test ping after register.
+		_, _ = s.ChangeFeed.DeliverTestPing(ctx, nil, 3*time.Second, orgID, sub.ID)
 		return map[string]any{"subscription": sub, "status": "ok"}, nil
 	case "replay":
 		subID, _ := body["subscription_id"].(string)
@@ -405,9 +659,58 @@ func (s *ApplicationService) ManageWebhooks(ctx context.Context, creds ports.Cre
 	}
 }
 
+func (s *ApplicationService) ListWebhooks(ctx context.Context, creds ports.Credentials, orgID string) (map[string]any, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	if s.ChangeFeed == nil {
+		return map[string]any{"items": []any{}}, nil
+	}
+	return map[string]any{"items": s.ChangeFeed.ListWebhooks(orgID)}, nil
+}
+
+func (s *ApplicationService) GetWebhook(ctx context.Context, creds ports.Credentials, orgID, subscriptionID string) (map[string]any, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	if s.ChangeFeed == nil {
+		return nil, platform.ErrNotFound("webhook subscription not found")
+	}
+	sub, err := s.ChangeFeed.GetWebhook(orgID, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"subscription": sub}, nil
+}
+
+func (s *ApplicationService) ListDeliveries(ctx context.Context, creds ports.Credentials, orgID, subscriptionID string, limit int) (map[string]any, error) {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	if s.ChangeFeed == nil {
+		return map[string]any{"items": []any{}}, nil
+	}
+	return map[string]any{"items": s.ChangeFeed.ListDeliveries(orgID, subscriptionID, limit)}, nil
+}
+
 func (s *ApplicationService) StartExport(ctx context.Context, creds ports.Credentials, orgID string) (map[string]any, error) {
 	principal, err := s.Identity.Authenticate(ctx, creds)
 	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.Quota != nil {
@@ -437,7 +740,11 @@ func (s *ApplicationService) StartExport(ctx context.Context, creds ports.Creden
 }
 
 func (s *ApplicationService) GetExport(ctx context.Context, creds ports.Credentials, orgID, exportID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.ExportJobs == nil {
@@ -453,7 +760,11 @@ func (s *ApplicationService) GetExport(ctx context.Context, creds ports.Credenti
 }
 
 func (s *ApplicationService) ImportExport(ctx context.Context, creds ports.Credentials, targetOrgID string, manifest export.Manifest) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, targetOrgID); err != nil {
 		return nil, err
 	}
 	if s.Export == nil {
@@ -488,6 +799,9 @@ func (s *ApplicationService) DeleteResource(ctx context.Context, creds ports.Cre
 	if err != nil {
 		return nil, err
 	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
 	if s.Deletion == nil {
 		return nil, platform.ErrUnavailable("deletion service not configured")
 	}
@@ -501,7 +815,11 @@ func (s *ApplicationService) DeleteResource(ctx context.Context, creds ports.Cre
 }
 
 func (s *ApplicationService) GetAudit(ctx context.Context, creds ports.Credentials, orgID string, limit int) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.Extras == nil {
@@ -517,6 +835,9 @@ func (s *ApplicationService) GetAudit(ctx context.Context, creds ports.Credentia
 func (s *ApplicationService) DiagnoseDecision(ctx context.Context, creds ports.Credentials, orgID, resourceID, action, purpose string) (map[string]any, error) {
 	principal, err := s.Identity.Authenticate(ctx, creds)
 	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	dec, err := s.Authz.Check(ctx, ports.AuthzCheck{
@@ -540,7 +861,11 @@ func (s *ApplicationService) DiagnoseDecision(ctx context.Context, creds ports.C
 }
 
 func (s *ApplicationService) DiagnoseByAuditID(ctx context.Context, creds ports.Credentials, orgID, auditID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.Extras == nil {
@@ -572,7 +897,11 @@ func (s *ApplicationService) DiagnoseByAuditID(ctx context.Context, creds ports.
 }
 
 func (s *ApplicationService) GetQuotas(ctx context.Context, creds ports.Credentials, orgID string) (ports.Quota, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return ports.Quota{}, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return ports.Quota{}, err
 	}
 	if s.Quotas == nil {
@@ -582,7 +911,11 @@ func (s *ApplicationService) GetQuotas(ctx context.Context, creds ports.Credenti
 }
 
 func (s *ApplicationService) SetQuotas(ctx context.Context, creds ports.Credentials, orgID string, q ports.Quota) (ports.Quota, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return ports.Quota{}, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return ports.Quota{}, err
 	}
 	if s.Quotas == nil {
@@ -595,7 +928,11 @@ func (s *ApplicationService) SetQuotas(ctx context.Context, creds ports.Credenti
 }
 
 func (s *ApplicationService) Bootstrap(ctx context.Context, creds ports.Credentials, orgID, name string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	org := ports.Organization{ID: orgID, Name: name, CreatedAt: time.Now().UTC()}
@@ -608,7 +945,11 @@ func (s *ApplicationService) Bootstrap(ctx context.Context, creds ports.Credenti
 }
 
 func (s *ApplicationService) OrgStatus(ctx context.Context, creds ports.Credentials, orgID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	org, err := s.Ledger.GetOrganization(ctx, orgID)
@@ -624,7 +965,11 @@ func (s *ApplicationService) OrgStatus(ctx context.Context, creds ports.Credenti
 }
 
 func (s *ApplicationService) CreateAgent(ctx context.Context, creds ports.Credentials, orgID string, req ports.CreateAgentCredentialRequest) (ports.AgentCredential, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return ports.AgentCredential{}, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return ports.AgentCredential{}, err
 	}
 	if s.Credentials == nil {
@@ -638,7 +983,11 @@ func (s *ApplicationService) CreateAgent(ctx context.Context, creds ports.Creden
 }
 
 func (s *ApplicationService) RotateAgent(ctx context.Context, creds ports.Credentials, orgID, agentID string) (ports.AgentCredential, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return ports.AgentCredential{}, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return ports.AgentCredential{}, err
 	}
 	if s.Credentials == nil {
@@ -653,7 +1002,11 @@ func (s *ApplicationService) RotateAgent(ctx context.Context, creds ports.Creden
 }
 
 func (s *ApplicationService) RevokeAgent(ctx context.Context, creds ports.Credentials, orgID, credentialID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	if s.Credentials == nil {
@@ -666,23 +1019,44 @@ func (s *ApplicationService) RevokeAgent(ctx context.Context, creds ports.Creden
 }
 
 func (s *ApplicationService) OpsLag(ctx context.Context, creds ports.Credentials, orgID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
-		return nil, err
-	}
-	pending, err := s.Ledger.ClaimOutbox(ctx, 100)
+	principal, err := s.Identity.Authenticate(ctx, creds)
 	if err != nil {
 		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	pending, err := s.Ledger.ListOutboxPending(ctx, orgID, 1000)
+	if err != nil {
+		return nil, err
+	}
+	oldestAgeMs := int64(0)
+	now := time.Now().UTC()
+	for _, e := range pending {
+		if e.CreatedAt.IsZero() {
+			continue
+		}
+		age := now.Sub(e.CreatedAt).Milliseconds()
+		if age > oldestAgeMs {
+			oldestAgeMs = age
+		}
 	}
 	return map[string]any{
 		"organization_id":   orgID,
 		"outbox_pending":    len(pending),
+		"oldest_age_ms":     oldestAgeMs,
 		"projection_lag_ms": 0,
 		"status":            "ok",
+		"note":              "projection_lag_ms reserved until durable projector metrics exist; outbox rows are not leased by this endpoint",
 	}, nil
 }
 
 func (s *ApplicationService) SupportBundle(ctx context.Context, creds ports.Credentials, orgID string) (map[string]any, error) {
-	if _, err := s.Identity.Authenticate(ctx, creds); err != nil {
+	principal, err := s.Identity.Authenticate(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
 	v := s.Version()
@@ -696,11 +1070,39 @@ func (s *ApplicationService) SupportBundle(ctx context.Context, creds ports.Cred
 }
 
 func (s *ApplicationService) Health() map[string]any {
+	ready, checks := s.ReadyStatus()
+	status := "ok"
+	if !ready {
+		status = "degraded"
+	}
+	out := map[string]any{"status": status, "ready": ready}
+	if checks != nil {
+		out["checks"] = checks
+	}
+	return out
+}
+
+// ReadyStatus returns whether the process should accept traffic and the probe checks map.
+func (s *ApplicationService) ReadyStatus() (bool, map[string]any) {
+	if s.ReadyDetail != nil {
+		return s.ReadyDetail()
+	}
 	ready := true
 	if s.Ready != nil {
 		ready = s.Ready()
 	}
-	return map[string]any{"status": "ok", "ready": ready}
+	checks := map[string]any{
+		"migrations":         map[string]any{"ok": ready},
+		"authz_model_pinned": map[string]any{"ok": strings.TrimSpace(s.Build.AuthzModelID) != ""},
+	}
+	if ready {
+		authzOK := strings.TrimSpace(s.Build.AuthzModelID) != ""
+		checks["authz_model_pinned"] = map[string]any{"ok": authzOK}
+		if !authzOK {
+			ready = false
+		}
+	}
+	return ready, checks
 }
 
 func (s *ApplicationService) Version() VersionInfo {

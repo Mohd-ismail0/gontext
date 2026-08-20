@@ -8,8 +8,9 @@ info:
 
     **In scope:** health/version, OAuth protected-resource metadata, search/get/brief,
     access requests, sources (+ verify/rotate), CloudEvents intake (+ batch),
-    evidence presign, change cursor feed, webhooks, export, audit/diagnose, quotas,
-    and organization bootstrap/status.
+    evidence presign, change cursor feed, webhooks, export/import, audit/diagnose,
+    quotas, agents, ops lag/support-bundle, MCP (`POST /mcp`), and organization
+    bootstrap/status.
 
     **Forbidden by contract (not documented, not implemented on this surface):**
     arbitrary SQL, caller-defined vector predicates, raw authorization tuple
@@ -41,8 +42,12 @@ tags:
   - name: Changes
   - name: Webhooks
   - name: Export
+  - name: Deletion
   - name: Audit
   - name: Quotas
+  - name: Agents
+  - name: Ops
+  - name: MCP
   - name: Admin
 
 security:
@@ -885,6 +890,267 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/resources/{resourceId}:delete:
+    post:
+      tags: [Deletion]
+      operationId: deleteResource
+      summary: Tombstone a resource (governed delete)
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/ResourceId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason: { type: string }
+      responses:
+        "200":
+          description: Deletion manifest
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/imports:
+    post:
+      tags: [Export]
+      operationId: importExportManifest
+      summary: Import a verified export manifest into this organization
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Export manifest (format_version + checksums required)
+      responses:
+        "202":
+          description: Import accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/diagnose:
+    post:
+      tags: [Audit]
+      operationId: diagnoseDecisionLive
+      summary: Live privileged diagnosis of an authz/policy decision
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [resource_id, action, purpose]
+              properties:
+                resource_id: { type: string }
+                action: { type: string }
+                purpose: { type: string }
+      responses:
+        "200":
+          description: Decision diagnosis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionDiagnosis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/agents:
+    post:
+      tags: [Agents]
+      operationId: createAgentCredential
+      summary: Create an agent API credential
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [agent_id]
+              properties:
+                agent_id: { type: string }
+                owner_id: { type: string }
+                delegation_id: { type: string }
+                label: { type: string }
+      responses:
+        "201":
+          description: Credential created (secret returned once)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/agents/{agentId}/credentials:rotate:
+    post:
+      tags: [Agents]
+      operationId: rotateAgentCredential
+      summary: Rotate agent API credentials
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - name: agentId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: New credential (secret returned once)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/agents/credentials/{credentialId}:revoke:
+    post:
+      tags: [Agents]
+      operationId: revokeAgentCredential
+      summary: Revoke an agent API credential
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - name: credentialId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/ops/lag:
+    get:
+      tags: [Ops]
+      operationId: getOpsLag
+      summary: Outbox pending depth (does not lease/claim rows)
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      responses:
+        "200":
+          description: Lag snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  organization_id: { type: string }
+                  outbox_pending: { type: integer }
+                  oldest_age_ms: { type: integer }
+                  projection_lag_ms: { type: integer }
+                  status: { type: string }
+                  note: { type: string }
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/ops/support-bundle:
+    post:
+      tags: [Ops]
+      operationId: createSupportBundle
+      summary: Collect a sanitized support bundle (no secrets/content)
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      responses:
+        "200":
+          description: Support bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /mcp:
+    post:
+      tags: [MCP]
+      operationId: mcpJSONRPC
+      summary: Model Context Protocol JSON-RPC endpoint
+      description: |
+        Streamable HTTP MCP transport. Requires Authorization bearer token.
+        See also `GET /.well-known/oauth-protected-resource` for OAuth PRM.
+        Tools mirror governed context search/get/brief/intake operations.
+      responses:
+        "200":
+          description: JSON-RPC response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "401":
+          $ref: "#/components/responses/Unauthorized"
         "default":
           $ref: "#/components/responses/Error"
 

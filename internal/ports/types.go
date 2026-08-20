@@ -1,6 +1,7 @@
 package ports
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type Principal struct {
 	Subject    string            `json:"subject"`
 	Roles      []string          `json:"roles,omitempty"`
 	Groups     []string          `json:"groups,omitempty"`
+	Scopes     []string          `json:"scopes,omitempty"`
 	Email      string            `json:"email,omitempty"`
 	Attributes map[string]string `json:"attributes,omitempty"`
 }
@@ -234,6 +236,8 @@ type SourceRegistration struct {
 	ClassificationCeiling  string            `json:"classification_ceiling,omitempty"`
 	ClassificationDefault  string            `json:"classification_default,omitempty"`
 	MappingSpec            string            `json:"mapping_spec_id,omitempty"`
+	// MappingSpecInline is accepted on register (JSON object); persisted separately.
+	MappingSpecInline      json.RawMessage   `json:"mapping_spec,omitempty"`
 	Enabled                bool              `json:"enabled"`
 	SigningSecret          string            `json:"signing_secret,omitempty"`
 	ReplayWindowSeconds    int               `json:"replay_window_seconds,omitempty"`

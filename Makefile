@@ -49,7 +49,7 @@ migrate:
 
 doctor:
 	@test -f $(COMPOSE_DIR)/.env || cp $(COMPOSE_DIR)/.env.example $(COMPOSE_DIR)/.env
-	$(COMPOSE) run --rm --entrypoint /usr/local/bin/context-fabric serve doctor
+	$(COMPOSE) run --rm -e CONTEXT_FABRIC_ROLE= --entrypoint /usr/local/bin/context-fabric serve doctor
 
 clean:
 	rm -rf bin

@@ -89,6 +89,8 @@ type LedgerStore interface {
 	// ClaimOutbox leases unpublished outbox rows for relay (at-least-once).
 	ClaimOutbox(ctx context.Context, limit int) ([]OutboxEntry, error)
 	MarkOutboxPublished(ctx context.Context, ids []string, at time.Time) error
+	// ListOutboxPending returns unpublished outbox rows without leasing them.
+	ListOutboxPending(ctx context.Context, orgID string, limit int) ([]OutboxEntry, error)
 
 	PutInbox(ctx context.Context, entry InboxEntry) error
 	HasInbox(ctx context.Context, orgID, consumer, msgID string) (bool, error)

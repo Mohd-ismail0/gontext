@@ -84,6 +84,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
     secretKeyRef:
       name: {{ .Values.dependencies.postgres.existingSecret }}
       key: {{ .Values.dependencies.postgres.gatewayPasswordKey }}
+- name: POSTGRES_DSN
+  value: {{ printf "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@%s:%v/%s?sslmode=%s" .Values.dependencies.postgres.host .Values.dependencies.postgres.port .Values.dependencies.postgres.database .Values.dependencies.postgres.sslMode | quote }}
 - name: S3_ENDPOINT
   value: {{ .Values.dependencies.s3.endpoint | quote }}
 - name: S3_REGION
@@ -147,4 +149,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
       key: {{ .Values.dependencies.oidc.clientSecretKey }}
 - name: CONTEXT_FABRIC_CONFIG
   value: /etc/context-fabric/config.yaml
+- name: MIGRATIONS_DIR
+  value: "/migrations"
 {{- end -}}

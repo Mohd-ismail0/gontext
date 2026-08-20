@@ -29,6 +29,8 @@ type Pipeline struct {
 	Audit    audit.Logger
 	// Optional snippet source (memory index); may be nil.
 	Snippets SnippetSource
+	// AllowEmptyScopes is a test helper; production must leave this false.
+	AllowEmptyScopes bool
 }
 
 // SnippetSource returns retrieval-safe text for citations.
@@ -60,13 +62,14 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 	if err != nil {
 		return ports.ContextPacket{}, err
 	}
+	if principal.OrgID == "" {
+		return ports.ContextPacket{}, platform.ErrForbidden("principal missing organization")
+	}
 	if req.OrgID == "" {
 		req.OrgID = principal.OrgID
-	}
-	if principal.OrgID != "" && principal.OrgID != req.OrgID {
+	} else if principal.OrgID != req.OrgID {
 		return ports.ContextPacket{}, platform.ErrForbidden("organization mismatch")
 	}
-	principal.OrgID = req.OrgID
 
 	if req.Consistency == "" {
 		req.Consistency = ports.ConsistencyMinLatency
@@ -78,8 +81,12 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 		req.Limit = 50
 	}
 
-	// Scope / action gate (OAuth scope ceiling).
-	if err := gateScopes(req.Scopes, req.Action); err != nil {
+	// Scope / action gate (OAuth scope ceiling): prefer IdentityProvider scopes.
+	scopes := principal.Scopes
+	if len(scopes) == 0 {
+		scopes = req.Scopes
+	}
+	if err := gateScopes(scopes, req.Action, p.AllowEmptyScopes); err != nil {
 		return ports.ContextPacket{}, err
 	}
 
@@ -284,9 +291,12 @@ func (p *Pipeline) emptyPacket(ctx context.Context, principal ports.Principal, r
 	}, nil
 }
 
-func gateScopes(scopes []string, action string) error {
+func gateScopes(scopes []string, action string, allowEmpty bool) error {
 	if len(scopes) == 0 {
-		return nil // local/demo tokens may omit scopes
+		if allowEmpty {
+			return nil
+		}
+		return platform.ErrForbidden("missing scopes")
 	}
 	need := "context:search"
 	switch action {

@@ -47,6 +47,7 @@ func Connect(url string, opts ...nats.Option) (*Bus, error) {
 }
 
 // ConnectOrNoop returns a live bus when reachable, otherwise NoopBus.
+// Prefer Connect in non-demo deployments — silent noop drops events.
 func ConnectOrNoop(url string) ports.EventBus {
 	if strings.TrimSpace(url) == "" {
 		return NewNoop()
@@ -161,6 +162,17 @@ func (c *PullConsumer) Fetch(ctx context.Context, max int, wait time.Duration) (
 	}
 	return out, nil
 }
+
+// FetchIndex pulls messages for the index projector consumer.
+func (b *Bus) FetchIndex(ctx context.Context, max int, wait time.Duration) ([]ports.EventMessage, error) {
+	pc, err := b.PullSubscribe(indexConsumerName, "context.>")
+	if err != nil {
+		return nil, err
+	}
+	return pc.Fetch(ctx, max, wait)
+}
+
+const indexConsumerName = "context-index-projector"
 
 // Close drains the connection.
 func (b *Bus) Close() {

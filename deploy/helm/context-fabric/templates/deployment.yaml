@@ -25,7 +25,7 @@ spec:
         - name: serve
           image: {{ include "context-fabric.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          args: ["serve"]
+          args: ["{{ .Values.serve.role | default "all" }}"]
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
@@ -34,7 +34,7 @@ spec:
               protocol: TCP
           env:
             - name: CONTEXT_FABRIC_ROLE
-              value: serve
+              value: {{ .Values.serve.role | default "all" | quote }}
             {{- include "context-fabric.env" . | nindent 12 }}
           volumeMounts:
             - name: config

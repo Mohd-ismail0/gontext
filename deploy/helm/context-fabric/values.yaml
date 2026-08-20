@@ -30,7 +30,10 @@ config:
 
 serve:
   enabled: true
-  replicaCount: 2
+  # Use role "all" until INDEX_BACKEND is durable; separate worker cannot share memory index.
+  # Keep replicaCount at 1 while the search index is in-process memory.
+  role: all
+  replicaCount: 1
   resources:
     requests:
       cpu: 250m
@@ -59,7 +62,9 @@ serve:
       failureThreshold: 3
 
 worker:
-  enabled: true
+  # Disabled by default: in-memory index is not shared across pods.
+  # Re-enable when INDEX_BACKEND=postgres (or equivalent) exists.
+  enabled: false
   replicaCount: 2
   resources:
     requests:
@@ -121,7 +126,7 @@ dependencies:
       enabled: false
   openfga:
     connectionMode: external
-    apiUrl: https://openfga.context-fabric.svc.cluster.local:8080
+    apiUrl: http://openfga.context-fabric.svc.cluster.local:8080
     existingSecret: context-fabric-openfga
     apiTokenKey: api-token
     storeIdKey: store-id

@@ -167,3 +167,33 @@ func TestRejectClassificationAboveCeiling(t *testing.T) {
 		t.Fatal("expected classification ceiling rejection")
 	}
 }
+
+func TestUnknownClassificationRejected(t *testing.T) {
+	// Unknown enum previously ranked 0 and bypassed ceiling checks (0 is never > ceiling).
+	spec := mapping.Spec{
+		OrganizationID: "org1",
+		Mappings: mapping.FieldMappings{
+			Classification:  &mapping.Expr{Expr: `"top_secret"`},
+			Trust:           &mapping.Expr{Expr: `"trusted_internal"`},
+			SourceAuthority: &mapping.Expr{Expr: `"corroborating"`},
+			ResourceType:    &mapping.Expr{Expr: `"event"`},
+			Timestamps:      mapping.TimestampMappings{},
+		},
+	}
+	_, err := mapping.Apply(spec, map[string]any{}, mapping.SourceCeilings{
+		OrganizationID:        "org1",
+		TrustCeiling:          "trusted_system",
+		AuthorityCeiling:      "source_of_truth",
+		ClassificationCeiling: "restricted",
+	}, mapping.Options{})
+	if err == nil {
+		t.Fatal("expected unknown classification to be rejected")
+	}
+	ae, ok := platform.AsAPIError(err)
+	if !ok || ae.HTTPStatus != 403 {
+		t.Fatalf("want forbidden, got %v", err)
+	}
+	if mapping.RankClassification("top_secret") >= 0 {
+		t.Fatal("unknown classification must rank < 0")
+	}
+}

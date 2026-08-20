@@ -25,12 +25,23 @@ type Client struct {
 }
 
 // NewFromEnv constructs a Client from OPENFGA_API_URL, OPENFGA_STORE_ID, OPENFGA_MODEL_ID.
+// OPENFGA_STORE_ID_FILE, when set, supplies the store id if OPENFGA_STORE_ID is empty/placeholder.
 func NewFromEnv() (*Client, error) {
 	api := firstNonEmpty(os.Getenv("OPENFGA_API_URL"), os.Getenv("OPENFGA_URL"))
-	store := os.Getenv("OPENFGA_STORE_ID")
+	store := strings.TrimSpace(os.Getenv("OPENFGA_STORE_ID"))
+	if store == "" || store == "replace-after-bootstrap" {
+		if path := strings.TrimSpace(os.Getenv("OPENFGA_STORE_ID_FILE")); path != "" {
+			if b, err := os.ReadFile(path); err == nil {
+				store = strings.TrimSpace(string(b))
+			}
+		}
+	}
 	model := firstNonEmpty(os.Getenv("OPENFGA_MODEL_ID"), os.Getenv("AUTHZ_MODEL_ID"))
 	if api == "" || store == "" || model == "" {
 		return nil, fmt.Errorf("OPENFGA_API_URL, OPENFGA_STORE_ID, and OPENFGA_MODEL_ID are required")
+	}
+	if store == "replace-after-bootstrap" {
+		return nil, fmt.Errorf("OPENFGA_STORE_ID is still %q; run bootstrap or set a real store id", store)
 	}
 	return &Client{
 		APIURL:     strings.TrimRight(api, "/"),

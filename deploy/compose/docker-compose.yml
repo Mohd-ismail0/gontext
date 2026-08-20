@@ -37,12 +37,9 @@ services:
       - minio_data:/data
     networks:
       - private
+    # MinIO server image lacks curl/mc; readiness is enforced by minio-init (`mc ready`).
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-      start_period: 10s
+      disable: true
     expose:
       - "9000"
       - "9001"
@@ -51,7 +48,7 @@ services:
     image: minio/mc:RELEASE.2024-11-17T19-35-56Z
     depends_on:
       minio:
-        condition: service_healthy
+        condition: service_started
     environment:
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
@@ -63,12 +60,14 @@ services:
       - -c
       - |
         set -eu
-        for i in 1 2 3 4 5 6 7 8 9 10; do
-          if mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"; then
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+          if mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}" \
+            && mc ready local; then
             break
           fi
           sleep 2
         done
+        mc ready local
         for b in "$${S3_BUCKET_RAW}" "$${S3_BUCKET_DERIVED}" "$${S3_BUCKET_QUARANTINE}"; do
           mc mb --ignore-existing "local/$${b}"
           mc version enable "local/$${b}"
@@ -152,6 +151,7 @@ services:
     environment:
       CONTEXT_FABRIC_ROLE: migrate
       CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-starter}
+      MIGRATIONS_DIR: /migrations
       POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
     depends_on:
@@ -161,23 +161,29 @@ services:
       - private
     restart: "no"
 
+  # Single process (serve+worker) until a durable shared INDEX_BACKEND exists.
+  # Default PROFILE=demo for local compose (Local auth + memory OpenFGA).
+  # For starter/OIDC: set CONTEXT_FABRIC_PROFILE=starter, run bootstrap, pin OPENFGA_STORE_ID.
   serve:
     image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
-    command: ["serve"]
+    command: ["all"]
     restart: unless-stopped
     env_file:
       - .env
     environment:
-      CONTEXT_FABRIC_ROLE: serve
-      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-starter}
+      CONTEXT_FABRIC_ROLE: all
+      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-demo}
       CONTEXT_FABRIC_LISTEN_ADDR: ":8080"
       POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       S3_ENDPOINT: http://minio:9000
       NATS_URL: nats://nats:4222
       OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
+    volumes:
+      - openfga_bootstrap:/var/run/context-fabric
     depends_on:
       postgres:
         condition: service_healthy
@@ -188,6 +194,8 @@ services:
       minio-init:
         condition: service_completed_successfully
       migrate:
+        condition: service_completed_successfully
+      bootstrap:
         condition: service_completed_successfully
     networks:
       - private
@@ -200,38 +208,50 @@ services:
       retries: 18
       start_period: 30s
 
-  worker:
+  bootstrap:
     image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
-    command: ["worker"]
-    restart: unless-stopped
+    command: ["bootstrap"]
     env_file:
       - .env
     environment:
-      CONTEXT_FABRIC_ROLE: worker
-      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-starter}
+      CONTEXT_FABRIC_ROLE: bootstrap
+      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-demo}
+      MIGRATIONS_DIR: /migrations
       POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
-      S3_ENDPOINT: http://minio:9000
-      NATS_URL: nats://nats:4222
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_STORE_ID: ${OPENFGA_STORE_ID:-replace-after-bootstrap}
+      OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
+      OPENFGA_MODEL_PATH: /contracts/openfga/model.fga
+    volumes:
+      - openfga_bootstrap:/var/run/context-fabric
     depends_on:
       postgres:
         condition: service_healthy
-      nats:
-        condition: service_healthy
       openfga:
         condition: service_healthy
-      minio-init:
-        condition: service_completed_successfully
       migrate:
         condition: service_completed_successfully
-      serve:
-        condition: service_healthy
     networks:
       - private
-    # No host ports — worker stays private.
+    restart: "no"
+
+  # Optional future worker when INDEX_BACKEND is durable (e.g. postgres).
+  # Do not enable alongside in-memory index — projections would not be shared with serve.
+  # worker:
+  #   image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+  #   build:
+  #     context: ../..
+  #     dockerfile: Dockerfile
+  #   command: ["worker"]
+  #   environment:
+  #     CONTEXT_FABRIC_ROLE: worker
+  #     POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+  #   networks:
+  #     - private
 
 networks:
   private:
@@ -243,3 +263,4 @@ volumes:
   postgres_data:
   minio_data:
   nats_data:
+  openfga_bootstrap:

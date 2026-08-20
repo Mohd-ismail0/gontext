@@ -84,3 +84,17 @@ func TestPolicyNeverGrantsWithoutPurpose(t *testing.T) {
 		t.Fatal("empty purpose must not allow")
 	}
 }
+
+func TestPolicyUnknownClassificationFailClosed(t *testing.T) {
+	p := policy.New()
+	res, err := p.Evaluate(context.Background(), ports.PolicyEval{
+		Purpose:        "ops",
+		Classification: "top_secret_xyz",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Allow || res.ReasonCode != "classification_unknown" {
+		t.Fatalf("unknown classification must deny: %#v", res)
+	}
+}

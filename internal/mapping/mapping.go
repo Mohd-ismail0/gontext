@@ -262,14 +262,23 @@ func (c Canonical) ToRecord(orgID, sourceSystem string) ports.Record {
 }
 
 func enforceCeilings(out Canonical, ceilings SourceCeilings) error {
-	if ceilings.TrustCeiling != "" && RankTrust(out.Trust) > RankTrust(ceilings.TrustCeiling) {
-		return platform.ErrForbidden("mapping raises trust above source ceiling")
+	if ceilings.TrustCeiling != "" {
+		outRank, ceilRank := RankTrust(out.Trust), RankTrust(ceilings.TrustCeiling)
+		if outRank < 0 || ceilRank < 0 || outRank > ceilRank {
+			return platform.ErrForbidden("mapping raises trust above source ceiling")
+		}
 	}
-	if ceilings.AuthorityCeiling != "" && RankAuthority(out.Authority) > RankAuthority(ceilings.AuthorityCeiling) {
-		return platform.ErrForbidden("mapping raises authority above source ceiling")
+	if ceilings.AuthorityCeiling != "" {
+		outRank, ceilRank := RankAuthority(out.Authority), RankAuthority(ceilings.AuthorityCeiling)
+		if outRank < 0 || ceilRank < 0 || outRank > ceilRank {
+			return platform.ErrForbidden("mapping raises authority above source ceiling")
+		}
 	}
-	if ceilings.ClassificationCeiling != "" && RankClassification(out.Classification) > RankClassification(ceilings.ClassificationCeiling) {
-		return platform.ErrForbidden("mapping raises classification above source ceiling")
+	if ceilings.ClassificationCeiling != "" {
+		outRank, ceilRank := RankClassification(out.Classification), RankClassification(ceilings.ClassificationCeiling)
+		if outRank < 0 || ceilRank < 0 || outRank > ceilRank {
+			return platform.ErrForbidden("mapping raises classification above source ceiling")
+		}
 	}
 	if out.VisibilityRef != "" && len(ceilings.AllowedVisibilityRefs) > 0 {
 		if !contains(ceilings.AllowedVisibilityRefs, out.VisibilityRef) {
@@ -279,7 +288,7 @@ func enforceCeilings(out Canonical, ceilings SourceCeilings) error {
 	return nil
 }
 
-// RankTrust orders trust tiers; higher means more trusted.
+// RankTrust orders trust tiers; higher means more trusted. Unknown values return -1.
 func RankTrust(v string) int {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "generated":
@@ -291,11 +300,11 @@ func RankTrust(v string) int {
 	case "trusted_system":
 		return 4
 	default:
-		return 0
+		return -1
 	}
 }
 
-// RankAuthority orders authority; higher means more authoritative.
+// RankAuthority orders authority; higher means more authoritative. Unknown values return -1.
 func RankAuthority(v string) int {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "inferred":
@@ -307,11 +316,11 @@ func RankAuthority(v string) int {
 	case "source_of_truth":
 		return 4
 	default:
-		return 0
+		return -1
 	}
 }
 
-// RankClassification orders sensitivity; higher means more sensitive.
+// RankClassification orders sensitivity; higher means more sensitive. Unknown values return -1.
 func RankClassification(v string) int {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "public":
@@ -323,7 +332,7 @@ func RankClassification(v string) int {
 	case "restricted":
 		return 4
 	default:
-		return 0
+		return -1
 	}
 }
 

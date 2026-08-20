@@ -30,6 +30,10 @@ RUN apk add --no-cache ca-certificates wget \
   && adduser -u 65532 -S nonroot -G nonroot
 
 COPY --from=builder /out/context-fabric /usr/local/bin/context-fabric
+COPY migrations /migrations
+COPY contracts/openfga /contracts/openfga
+ENV MIGRATIONS_DIR=/migrations
+ENV OPENFGA_MODEL_PATH=/contracts/openfga/model.fga
 
 USER nonroot:nonroot
 EXPOSE 8080

@@ -21,6 +21,15 @@ func NewLocal() *LocalProvider {
 
 var _ ports.IdentityProvider = (*LocalProvider)(nil)
 
+var (
+	scopesAdmin = []string{
+		"context:search", "context:read", "context:ingest",
+		"context:audit_read", "context:request_access", "context:manage_policy",
+	}
+	scopesMember = []string{"context:search", "context:read", "context:ingest"}
+	scopesAgent  = []string{"context:search", "context:read"}
+)
+
 // Discover returns synthetic local OIDC metadata.
 func (p *LocalProvider) Discover(_ context.Context) (ports.OIDCMetadata, error) {
 	return ports.OIDCMetadata{
@@ -67,5 +76,19 @@ func (p *LocalProvider) Authenticate(_ context.Context, credentials ports.Creden
 		Issuer:  localIssuer,
 		Subject: sub,
 		Roles:   []string{role},
+		Scopes:  scopesForRole(role),
 	}, nil
+}
+
+func scopesForRole(role string) []string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "admin", "manager", "owner", "knowledge_admin":
+		return append([]string{}, scopesAdmin...)
+	case "member", "employee", "user":
+		return append([]string{}, scopesMember...)
+	case "agent", "service":
+		return append([]string{}, scopesAgent...)
+	default:
+		return append([]string{}, scopesMember...)
+	}
 }

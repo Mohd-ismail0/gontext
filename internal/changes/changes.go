@@ -1,11 +1,15 @@
 package changes
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"time"
 
@@ -150,6 +154,31 @@ func (s *Service) UpsertWebhook(orgID string, targetURL string, events []string,
 	return pub, nil
 }
 
+// ListWebhooks returns public subscriptions for an org.
+func (s *Service) ListWebhooks(orgID string) []Subscription {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Subscription, 0, len(s.subs[orgID]))
+	for _, sub := range s.subs[orgID] {
+		pub := sub
+		pub.Secret = ""
+		out = append(out, pub)
+	}
+	return out
+}
+
+// GetWebhook returns a public subscription view.
+func (s *Service) GetWebhook(orgID, subscriptionID string) (Subscription, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.subs[orgID][subscriptionID]
+	if !ok {
+		return Subscription{}, platform.ErrNotFound("webhook subscription not found")
+	}
+	sub.Secret = ""
+	return sub, nil
+}
+
 // SignHMAC signs a payload with the org webhook secret (or default).
 func (s *Service) SignHMAC(secret string, body []byte) string {
 	key := []byte(secret)
@@ -251,6 +280,158 @@ func (s *Service) DeliverSigned(orgID, subscriptionID string, ev ports.ChangeEve
 	signature = s.SignHMAC(sub.Secret, body)
 	delivery = s.RecordDelivery(orgID, subscriptionID, ev.EventID, 1, 200, true, "", body)
 	return body, signature, delivery, nil
+}
+
+// DeliverPending HTTP POSTs signed bodies for undelivered change events to matching subscriptions.
+func (s *Service) DeliverPending(ctx context.Context, client *http.Client, timeout time.Duration, limit int) int {
+	if client == nil {
+		client = &http.Client{}
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	s.mu.RLock()
+	orgIDs := make([]string, 0, len(s.subs))
+	for org := range s.subs {
+		orgIDs = append(orgIDs, org)
+	}
+	s.mu.RUnlock()
+
+	delivered := 0
+	for _, orgID := range orgIDs {
+		if delivered >= limit {
+			break
+		}
+		s.mu.RLock()
+		subs := make([]Subscription, 0, len(s.subs[orgID]))
+		for _, sub := range s.subs[orgID] {
+			if sub.Enabled {
+				subs = append(subs, sub)
+			}
+		}
+		s.mu.RUnlock()
+		if len(subs) == 0 || s.Feed == nil {
+			continue
+		}
+		events, _, err := s.Feed.ListChanges(ctx, orgID, "", 100)
+		if err != nil {
+			continue
+		}
+		for _, ev := range events {
+			if delivered >= limit {
+				break
+			}
+			for _, sub := range subs {
+				if delivered >= limit {
+					break
+				}
+				if s.hasSuccessfulDelivery(orgID, sub.ID, ev.EventID) {
+					continue
+				}
+				if !eventMatches(sub.Events, ev.Action) {
+					continue
+				}
+				if err := s.pushOne(ctx, client, timeout, sub, ev); err == nil {
+					delivered++
+				} else {
+					delivered++ // still count attempt
+				}
+			}
+		}
+	}
+	return delivered
+}
+
+// DeliverTestPing sends a synthetic ping event to a subscription URL.
+func (s *Service) DeliverTestPing(ctx context.Context, client *http.Client, timeout time.Duration, orgID, subscriptionID string) (DeliveryAttempt, error) {
+	s.mu.RLock()
+	sub, ok := s.subs[orgID][subscriptionID]
+	s.mu.RUnlock()
+	if !ok {
+		return DeliveryAttempt{}, platform.ErrNotFound("webhook subscription not found")
+	}
+	ev := ports.ChangeEvent{
+		EventID: platform.NewEventID(), OrgID: orgID, ResourceID: "ping",
+		Action: "webhook.ping", Cursor: "ping", OccurredAt: s.now(),
+	}
+	if client == nil {
+		client = &http.Client{}
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	err := s.pushOne(ctx, client, timeout, sub, ev)
+	attempts := s.ListDeliveries(orgID, subscriptionID, 1)
+	if len(attempts) == 0 {
+		return DeliveryAttempt{}, err
+	}
+	return attempts[0], err
+}
+
+func (s *Service) pushOne(ctx context.Context, client *http.Client, timeout time.Duration, sub Subscription, ev ports.ChangeEvent) error {
+	pub := ToPublic(ev)
+	body, err := json.Marshal(pub)
+	if err != nil {
+		return err
+	}
+	sig := s.SignHMAC(sub.Secret, body)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.TargetURL, bytes.NewReader(body))
+	if err != nil {
+		s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, 1, 0, false, err.Error(), body)
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Context-Fabric-Signature", sig)
+	req.Header.Set("X-Context-Fabric-Event-Id", ev.EventID)
+	resp, err := client.Do(req)
+	if err != nil {
+		s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, 1, 0, false, err.Error(), body)
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	ok := resp.StatusCode >= 200 && resp.StatusCode < 300
+	errMsg := ""
+	if !ok {
+		errMsg = fmt.Sprintf("status %d", resp.StatusCode)
+	}
+	s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, 1, resp.StatusCode, ok, errMsg, body)
+	if !ok {
+		return fmt.Errorf("webhook delivery failed: %s", errMsg)
+	}
+	return nil
+}
+
+func (s *Service) hasSuccessfulDelivery(orgID, subscriptionID, eventID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, d := range s.deliv[orgID] {
+		if d.SubscriptionID == subscriptionID && d.EventID == eventID && d.Success {
+			return true
+		}
+	}
+	return false
+}
+
+func eventMatches(filter []string, action string) bool {
+	if len(filter) == 0 {
+		return true
+	}
+	changeType := action
+	if changeType == "" || changeType == "upsert" {
+		changeType = "resource.accepted"
+	}
+	for _, f := range filter {
+		if f == changeType || f == action || f == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // ToPublic maps an internal change to the public metadata-only shape.

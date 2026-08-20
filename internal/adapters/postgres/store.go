@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xsama/context-fabric/internal/mapping"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -259,6 +261,42 @@ FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT $1`, limit)
 	return out, rows.Err()
 }
 
+// ListOutboxPending returns unpublished outbox rows without leasing them.
+func (s *Store) ListOutboxPending(ctx context.Context, orgID string, limit int) ([]ports.OutboxEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	q := `
+SELECT id, organization_id, subject, payload, headers, created_at, published_at
+FROM outbox WHERE published_at IS NULL`
+	args := []any{}
+	if orgID != "" {
+		q += ` AND organization_id=$1`
+		args = append(args, orgID)
+		q += ` ORDER BY created_at ASC LIMIT $2`
+		args = append(args, limit)
+	} else {
+		q += ` ORDER BY created_at ASC LIMIT $1`
+		args = append(args, limit)
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ports.OutboxEntry
+	for rows.Next() {
+		var e ports.OutboxEntry
+		var headers []byte
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.Subject, &e.Payload, &headers, &e.CreatedAt, &e.Published); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(headers, &e.Headers)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) MarkOutboxPublished(ctx context.Context, ids []string, at time.Time) error {
 	_, err := s.pool.Exec(ctx, `UPDATE outbox SET published_at=$1 WHERE id = ANY($2)`, at, ids)
 	return err
@@ -446,6 +484,127 @@ FROM delegation_grants WHERE organization_id=$1`
 	return out, err
 }
 
+// PutMappingSpec stores a MappingSpec in mapping_specs when available, else sources.attributes.
+func (s *Store) PutMappingSpec(ctx context.Context, orgID, sourceID string, spec mapping.Spec) error {
+	if orgID == "" || sourceID == "" {
+		return platform.ErrValidation("org and source_id required")
+	}
+	if spec.OrganizationID == "" {
+		spec.OrganizationID = orgID
+	}
+	if spec.SourceID == "" {
+		spec.SourceID = sourceID
+	}
+	if spec.ID == "" {
+		spec.ID = sourceID
+	}
+	version := spec.Revision
+	if version == "" {
+		version = "1"
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	return s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		var hasTable bool
+		if err := tx.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM information_schema.tables
+  WHERE table_schema='public' AND table_name='mapping_specs'
+)`).Scan(&hasTable); err != nil {
+			return err
+		}
+		if hasTable {
+			_, err := tx.Exec(ctx, `
+INSERT INTO mapping_specs (id, organization_id, version, source_kind, rules, created_at)
+VALUES ($1,$2,$3,$4,$5,now())
+ON CONFLICT (organization_id, id, version) DO UPDATE SET rules=EXCLUDED.rules, source_kind=EXCLUDED.source_kind`,
+				spec.ID, orgID, version, firstNonEmpty(spec.SourceID, sourceID), raw)
+			if err == nil {
+				_, _ = tx.Exec(ctx, `UPDATE sources SET mapping_spec_id=$1, updated_at=now() WHERE organization_id=$2 AND id=$3`,
+					spec.ID, orgID, sourceID)
+				return nil
+			}
+			// Fall through to attributes on schema mismatch / missing columns.
+		}
+		attrs := map[string]string{"mapping_spec": string(raw)}
+		_, err := tx.Exec(ctx, `
+UPDATE sources SET
+  attributes = COALESCE(attributes, '{}'::jsonb) || $1::jsonb,
+  mapping_spec_id = COALESCE(NULLIF(mapping_spec_id,''), $2),
+  updated_at = now()
+WHERE organization_id=$3 AND id=$4`,
+			mustJSON(attrs), spec.ID, orgID, sourceID)
+		return err
+	})
+}
+
+// GetMappingSpec loads MappingSpec for a source.
+func (s *Store) GetMappingSpec(ctx context.Context, orgID, sourceID string) (mapping.Spec, error) {
+	var out mapping.Spec
+	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		var mappingSpecID string
+		var attrs []byte
+		err := tx.QueryRow(ctx, `
+SELECT COALESCE(mapping_spec_id,''), attributes FROM sources WHERE organization_id=$1 AND id=$2`,
+			orgID, sourceID).Scan(&mappingSpecID, &attrs)
+		if err == pgx.ErrNoRows {
+			return platform.ErrNotFound("mapping spec not found")
+		}
+		if err != nil {
+			return err
+		}
+		var attrMap map[string]string
+		_ = json.Unmarshal(attrs, &attrMap)
+		if attrMap != nil {
+			if raw, ok := attrMap["mapping_spec"]; ok && raw != "" {
+				if err := json.Unmarshal([]byte(raw), &out); err == nil {
+					return nil
+				}
+			}
+		}
+		id := mappingSpecID
+		if id == "" {
+			id = sourceID
+		}
+		var hasTable bool
+		_ = tx.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM information_schema.tables
+  WHERE table_schema='public' AND table_name='mapping_specs'
+)`).Scan(&hasTable)
+		if !hasTable {
+			return platform.ErrNotFound("mapping spec not found")
+		}
+		var rules []byte
+		err = tx.QueryRow(ctx, `
+SELECT rules FROM mapping_specs
+WHERE organization_id=$1 AND id=$2
+ORDER BY created_at DESC LIMIT 1`, orgID, id).Scan(&rules)
+		if err == pgx.ErrNoRows {
+			return platform.ErrNotFound("mapping spec not found")
+		}
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(rules, &out); err != nil {
+			return platform.ErrValidation("invalid stored mapping spec")
+		}
+		return nil
+	})
+	return out, err
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // AppendAudit persists an audit event under tenant RLS.
 func (s *Store) AppendAudit(ctx context.Context, event ports.AuditEvent) error {
 	return s.pool.WithTenant(ctx, event.OrgID, func(ctx context.Context, tx pgx.Tx) error {
@@ -458,6 +617,234 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 			event.ResourceIDsSample, event.TraceID, mustJSON(event.Attributes), event.CreatedAt)
 		return err
 	})
+}
+
+// ListAudit returns recent audit events for an organization (no-op empty if table missing).
+func (s *Store) ListAudit(ctx context.Context, orgID string, limit int) ([]ports.AuditEvent, error) {
+	ok, err := s.tableExists(ctx, "audit_events")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []ports.AuditEvent
+	err = s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+SELECT id, organization_id, principal_id, COALESCE(principal_kind,''), COALESCE(delegation_id,''),
+       action, reason_code, COALESCE(authz_model_rev,''), COALESCE(policy_revision,''),
+       resource_count, COALESCE(resource_ids_sample,'{}'), COALESCE(trace_id,''), attributes, created_at
+FROM audit_events WHERE organization_id=$1 ORDER BY created_at DESC LIMIT $2`, orgID, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ev ports.AuditEvent
+			var kind string
+			var attrs []byte
+			if err := rows.Scan(&ev.AuditID, &ev.OrgID, &ev.PrincipalID, &kind, &ev.DelegationID,
+				&ev.Action, &ev.ReasonCode, &ev.AuthzModelRev, &ev.PolicyRevision,
+				&ev.ResourceCount, &ev.ResourceIDsSample, &ev.TraceID, &attrs, &ev.CreatedAt); err != nil {
+				return err
+			}
+			ev.PrincipalKind = ports.PrincipalKind(kind)
+			_ = json.Unmarshal(attrs, &ev.Attributes)
+			out = append(out, ev)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+// AppendChange writes a change_events row.
+func (s *Store) AppendChange(ctx context.Context, ev ports.ChangeEvent) error {
+	if ev.EventID == "" {
+		ev.EventID = platform.NewEventID()
+	}
+	if ev.OccurredAt.IsZero() {
+		ev.OccurredAt = time.Now().UTC()
+	}
+	if ev.Cursor == "" {
+		ev.Cursor = ev.OccurredAt.UTC().Format(time.RFC3339Nano)
+	}
+	return s.pool.WithTenant(ctx, ev.OrgID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+INSERT INTO change_events (id, organization_id, resource_id, revision_id, action, cursor, occurred_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			ev.EventID, ev.OrgID, ev.ResourceID, nullEmpty(ev.RevisionID), ev.Action, ev.Cursor, ev.OccurredAt)
+		return err
+	})
+}
+
+// ListChanges returns change events after cursor (lexicographic on cursor column).
+func (s *Store) ListChanges(ctx context.Context, orgID, cursor string, limit int) ([]ports.ChangeEvent, string, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []ports.ChangeEvent
+	next := cursor
+	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+SELECT id, organization_id, resource_id, COALESCE(revision_id,''), action, cursor, occurred_at
+FROM change_events
+WHERE organization_id=$1 AND ($2 = '' OR cursor > $2)
+ORDER BY cursor ASC
+LIMIT $3`, orgID, cursor, limit)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var ev ports.ChangeEvent
+			if err := rows.Scan(&ev.EventID, &ev.OrgID, &ev.ResourceID, &ev.RevisionID, &ev.Action, &ev.Cursor, &ev.OccurredAt); err != nil {
+				return err
+			}
+			out = append(out, ev)
+			next = ev.Cursor
+		}
+		return rows.Err()
+	})
+	return out, next, err
+}
+
+// GetQuotas loads org quotas (defaults when no row).
+func (s *Store) GetQuotas(ctx context.Context, orgID string) (ports.Quota, error) {
+	def := ports.Quota{SearchPerMinute: 60, IntakePerMinute: 120, ExportPerMinute: 10, MaxResults: 25}
+	var q ports.Quota
+	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+SELECT search_per_minute, intake_per_minute, export_per_minute, max_results
+FROM quotas WHERE organization_id=$1`, orgID).
+			Scan(&q.SearchPerMinute, &q.IntakePerMinute, &q.ExportPerMinute, &q.MaxResults)
+		if err == pgx.ErrNoRows {
+			q = def
+			return nil
+		}
+		return err
+	})
+	return q, err
+}
+
+// SetQuotas upserts org quotas.
+func (s *Store) SetQuotas(ctx context.Context, orgID string, q ports.Quota) error {
+	return s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+INSERT INTO quotas (organization_id, search_per_minute, intake_per_minute, export_per_minute, max_results, updated_at)
+VALUES ($1,$2,$3,$4,$5,now())
+ON CONFLICT (organization_id) DO UPDATE SET
+  search_per_minute=EXCLUDED.search_per_minute,
+  intake_per_minute=EXCLUDED.intake_per_minute,
+  export_per_minute=EXCLUDED.export_per_minute,
+  max_results=EXCLUDED.max_results,
+  updated_at=now()`,
+			orgID, q.SearchPerMinute, q.IntakePerMinute, q.ExportPerMinute, q.MaxResults)
+		return err
+	})
+}
+
+// PutExportJob upserts an export_jobs row (manifest JSON stored in manifest_uri).
+func (s *Store) PutExportJob(ctx context.Context, orgID, jobID, status string, manifest any) error {
+	ok, err := s.tableExists(ctx, "export_jobs")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return platform.ErrUnavailable("export_jobs table missing; run migrate")
+	}
+	manifestJSON := string(mustJSON(manifest))
+	return s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+INSERT INTO export_jobs (id, organization_id, status, manifest_uri, created_at)
+VALUES ($1,$2,$3,$4,now())
+ON CONFLICT (organization_id, id) DO UPDATE SET
+  status=EXCLUDED.status,
+  manifest_uri=EXCLUDED.manifest_uri,
+  completed_at=CASE WHEN EXCLUDED.status IN ('completed','failed') THEN now() ELSE export_jobs.completed_at END`,
+			jobID, orgID, nullStr(status, "pending"), manifestJSON)
+		return err
+	})
+}
+
+// GetExportJob loads an export job; manifest is unmarshaled from manifest_uri JSON when possible.
+func (s *Store) GetExportJob(ctx context.Context, orgID, jobID string) (string, string, any, error) {
+	ok, err := s.tableExists(ctx, "export_jobs")
+	if err != nil {
+		return "", "", nil, err
+	}
+	if !ok {
+		return "", "", nil, platform.ErrNotFound("export not found")
+	}
+	var id, status, manifestURI string
+	err = s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `
+SELECT id, status, COALESCE(manifest_uri,'')
+FROM export_jobs WHERE organization_id=$1 AND id=$2`, orgID, jobID).
+			Scan(&id, &status, &manifestURI)
+		if err == pgx.ErrNoRows {
+			return platform.ErrNotFound("export not found")
+		}
+		return err
+	})
+	if err != nil {
+		return "", "", nil, err
+	}
+	var manifest any
+	if manifestURI != "" {
+		var decoded any
+		if json.Unmarshal([]byte(manifestURI), &decoded) == nil {
+			manifest = decoded
+		} else {
+			manifest = manifestURI
+		}
+	}
+	return id, status, manifest, nil
+}
+
+// PutAccessRequest persists a pending access request (access_requests table).
+func (s *Store) PutAccessRequest(ctx context.Context, orgID, requestID, resourceID, purpose, justification, auditID string) error {
+	if orgID == "" || requestID == "" {
+		return platform.ErrValidation("org and request_id required")
+	}
+	ok, err := s.tableExists(ctx, "access_requests")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return platform.ErrUnavailable("access_requests table missing; run migrate")
+	}
+	return s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+INSERT INTO access_requests (id, organization_id, resource_id, purpose, justification, status, audit_id, created_at)
+VALUES ($1,$2,$3,$4,$5,'pending',$6,now())
+ON CONFLICT (organization_id, id) DO UPDATE SET
+  resource_id=EXCLUDED.resource_id,
+  purpose=EXCLUDED.purpose,
+  justification=EXCLUDED.justification,
+  audit_id=EXCLUDED.audit_id`,
+			requestID, orgID, resourceID, purpose, justification, nullEmpty(auditID))
+		return err
+	})
+}
+
+func (s *Store) tableExists(ctx context.Context, name string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `
+SELECT EXISTS(
+  SELECT 1 FROM information_schema.tables
+  WHERE table_schema='public' AND table_name=$1
+)`, name).Scan(&ok)
+	return ok, err
+}
+
+func nullEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func mustPgTx(tx ports.Tx) pgx.Tx {

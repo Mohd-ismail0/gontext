@@ -29,6 +29,19 @@ func TestLocalAuthenticate(t *testing.T) {
 	if prin.Issuer != "local" || prin.ID != "local|alice" {
 		t.Fatalf("identity %#v", prin)
 	}
+	if len(prin.Scopes) == 0 {
+		t.Fatal("admin should receive role-derived scopes")
+	}
+	found := false
+	for _, s := range prin.Scopes {
+		if s == "context:manage_policy" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("admin scopes missing manage_policy: %v", prin.Scopes)
+	}
 }
 
 func TestLocalAgentRole(t *testing.T) {

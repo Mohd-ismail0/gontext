@@ -75,7 +75,21 @@ func (p *Provider) Evaluate(_ context.Context, req ports.PolicyEval) (ports.Poli
 		class = "internal"
 	}
 
-	if rank(class) > rank(p.MaxClassification) {
+	classRank, ok := rank(class)
+	if !ok {
+		return ports.PolicyResult{
+			Allow:      false,
+			ReasonCode: "classification_unknown",
+		}, nil
+	}
+	maxRank, ok := rank(p.MaxClassification)
+	if !ok {
+		return ports.PolicyResult{
+			Allow:      false,
+			ReasonCode: "classification_ceiling_misconfigured",
+		}, nil
+	}
+	if classRank > maxRank {
 		return ports.PolicyResult{
 			Allow:      false,
 			ReasonCode: "classification_ceiling",
@@ -84,7 +98,7 @@ func (p *Provider) Evaluate(_ context.Context, req ports.PolicyEval) (ports.Poli
 
 	redaction := p.PublicRedact
 	obligations := []string{"audit_disclosure"}
-	if rank(class) >= rank("confidential") {
+	if confRank, ok := rank("confidential"); ok && classRank >= confRank {
 		redaction = p.ConfidentialRedact
 		obligations = append(obligations, "mask_pii", "no_export_raw")
 	}
@@ -103,9 +117,8 @@ func (p *Provider) Evaluate(_ context.Context, req ports.PolicyEval) (ports.Poli
 	}, nil
 }
 
-func rank(c string) int {
-	if r, ok := classificationRank[strings.ToLower(c)]; ok {
-		return r
-	}
-	return classificationRank["internal"]
+// rank returns the sensitivity rank and false for unknown labels (fail-closed).
+func rank(c string) (int, bool) {
+	r, ok := classificationRank[strings.ToLower(strings.TrimSpace(c))]
+	return r, ok
 }

@@ -3,9 +3,10 @@ package mcp
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 
-	"github.com/xsama/context-fabric/internal/app"
+	"github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -234,8 +235,14 @@ func bearerCreds(r *http.Request) ports.Credentials {
 	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
 		token = strings.TrimSpace(token[7:])
 	}
-	scopes := strings.Fields(r.Header.Get("X-Context-Scopes"))
-	return ports.Credentials{BearerToken: token, Extra: map[string]string{"scopes": strings.Join(scopes, " ")}}
+	creds := ports.Credentials{BearerToken: token}
+	if os.Getenv("CONTEXT_FABRIC_ALLOW_SCOPE_HEADER") == "1" {
+		scopes := strings.Fields(r.Header.Get("X-Context-Scopes"))
+		if len(scopes) > 0 {
+			creds.Extra = map[string]string{"scopes": strings.Join(scopes, " ")}
+		}
+	}
+	return creds
 }
 
 func scopesOf(creds ports.Credentials) []string {

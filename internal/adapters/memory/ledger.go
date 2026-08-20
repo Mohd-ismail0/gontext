@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xsama/context-fabric/internal/mapping"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -28,6 +29,7 @@ type Store struct {
 	accessReqs   map[string]map[string]AccessRequest
 	exports      map[string]map[string]ExportJob
 	holds        map[string]map[string]bool // org -> resourceID -> legal hold
+	mappings     map[string]mapping.Spec    // sourceID -> Spec
 }
 
 // WebhookSubscription is a test/demo webhook registration.
@@ -42,13 +44,14 @@ type WebhookSubscription struct {
 
 // AccessRequest tracks a pending access request.
 type AccessRequest struct {
-	RequestID   string
-	OrgID       string
-	ResourceID  string
-	Purpose     string
-	Status      string
-	CreatedAt   time.Time
-	AuditID     string
+	RequestID     string
+	OrgID         string
+	ResourceID    string
+	Purpose       string
+	Justification string
+	Status        string
+	CreatedAt     time.Time
+	AuditID       string
 }
 
 // ExportJob tracks an export.
@@ -78,6 +81,7 @@ func NewStore() *Store {
 		accessReqs:  make(map[string]map[string]AccessRequest),
 		exports:     make(map[string]map[string]ExportJob),
 		holds:       make(map[string]map[string]bool),
+		mappings:    make(map[string]mapping.Spec),
 	}
 }
 
@@ -270,6 +274,95 @@ func (s *Store) ClaimOutbox(_ context.Context, limit int) ([]ports.OutboxEntry, 
 	return out, nil
 }
 
+// ListOutboxPending returns unpublished outbox rows without leasing/claiming them.
+func (s *Store) ListOutboxPending(_ context.Context, orgID string, limit int) ([]ports.OutboxEntry, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []ports.OutboxEntry
+	for _, e := range s.outbox {
+		if e.Published != nil {
+			continue
+		}
+		if orgID != "" && e.OrgID != orgID {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+// PutMappingSpec stores a MappingSpec keyed by sourceID.
+func (s *Store) PutMappingSpec(_ context.Context, orgID, sourceID string, spec mapping.Spec) error {
+	if sourceID == "" {
+		return platform.ErrValidation("source_id required")
+	}
+	if spec.OrganizationID == "" {
+		spec.OrganizationID = orgID
+	}
+	if spec.SourceID == "" {
+		spec.SourceID = sourceID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.mappings[sourceID] = spec
+	return nil
+}
+
+// GetMappingSpec loads a MappingSpec by sourceID.
+func (s *Store) GetMappingSpec(_ context.Context, orgID, sourceID string) (mapping.Spec, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	spec, ok := s.mappings[sourceID]
+	if !ok {
+		return mapping.Spec{}, platform.ErrNotFound("mapping spec not found")
+	}
+	if orgID != "" && spec.OrganizationID != "" && spec.OrganizationID != orgID {
+		return mapping.Spec{}, platform.ErrNotFound("mapping spec not found")
+	}
+	return spec, nil
+}
+
+// PutAccessRequest persists a pending access request with justification.
+func (s *Store) PutAccessRequest(_ context.Context, orgID, requestID, resourceID, purpose, justification, auditID string) error {
+	if orgID == "" || requestID == "" {
+		return platform.ErrValidation("org and request_id required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.accessReqs[orgID]
+	if m == nil {
+		m = make(map[string]AccessRequest)
+		s.accessReqs[orgID] = m
+	}
+	m[requestID] = AccessRequest{
+		RequestID: requestID, OrgID: orgID, ResourceID: resourceID,
+		Purpose: purpose, Justification: justification, Status: "pending",
+		CreatedAt: time.Now().UTC(), AuditID: auditID,
+	}
+	return nil
+}
+
+// GetAccessRequest returns a stored access request.
+func (s *Store) GetAccessRequest(_ context.Context, orgID, requestID string) (AccessRequest, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m := s.accessReqs[orgID]
+	if m == nil {
+		return AccessRequest{}, platform.ErrNotFound("access request not found")
+	}
+	req, ok := m[requestID]
+	if !ok {
+		return AccessRequest{}, platform.ErrNotFound("access request not found")
+	}
+	return req, nil
+}
+
 func (s *Store) GetIdempotency(_ context.Context, orgID, key string) (ports.IdempotencyRecord, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -339,6 +432,7 @@ func (s *Store) UpsertSource(_ context.Context, _ ports.Tx, src ports.SourceRegi
 		src.CreatedAt = now
 	}
 	src.UpdatedAt = now
+	src.MappingSpecInline = nil
 	m[src.SourceID] = src
 	return nil
 }

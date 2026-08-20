@@ -2,7 +2,28 @@
 
 Self-hosted, multi-tenant **organizational context plane** for governed intake, provenance, and employee/agent retrieval over REST and MCP. One signed multi-architecture Go image; packaging profiles do not fork authorization or canonical semantics.
 
-## Quickstart (Compose)
+## Quickstart (memory / local)
+
+Fastest path for development — no Postgres, OpenFGA, or Compose required:
+
+```bash
+make build
+CONTEXT_FABRIC_MEMORY=1 ./bin/context-fabric all
+# or: empty POSTGRES_DSN + PROFILE=demo
+```
+
+Auth uses the local token adapter (`Authorization: Bearer local:org1:alice:admin`). Point the CLI at the process:
+
+```bash
+export CONTEXT_FABRIC_URL=http://127.0.0.1:8080
+export CONTEXT_FABRIC_TOKEN=local:org1:alice:admin
+```
+
+## Compose (bundled deps)
+
+Requires Docker. Prefer memory quickstart first; Compose brings Postgres, MinIO, NATS, and OpenFGA.
+
+**Caveats:** until a durable shared index exists, the app role is `all` (serve+worker in one process). A separate worker cannot share the in-memory index. Demo profile keeps Local auth + memory OpenFGA; starter/xsama/scaled require real OIDC and OpenFGA (fail-closed).
 
 ```bash
 cp deploy/compose/.env.example deploy/compose/.env
@@ -14,7 +35,7 @@ make compose-up
 docker compose -f deploy/compose/docker-compose.minimal.yaml --env-file deploy/compose/.env up --build
 ```
 
-Public surface: **serve only** on port `8080` (`/health/live`, `/health/startup`, `/health/ready`, `/v1/system/version`). Postgres, MinIO, NATS, and OpenFGA stay on the private Compose network.
+Public surface: **serve/`all` only** on port `8080` (`/health/live`, `/health/startup`, `/health/ready`, `/v1/system/version`). Postgres, MinIO, NATS, and OpenFGA stay on the private Compose network.
 
 Useful targets: `make build`, `make test`, `make lint`, `make migrate`, `make doctor`.
 
@@ -40,7 +61,7 @@ cf ops lag --org org1
 cf ops support-bundle --org org1
 ```
 
-In memory/demo mode, start serve with `CONTEXT_FABRIC_MEMORY=1` (or empty `POSTGRES_DSN` + demo profile). MCP is mounted at `POST /mcp` with the same bearer auth; OAuth protected-resource metadata is at `/.well-known/oauth-protected-resource`.
+MCP is mounted at `POST /mcp` with the same bearer auth; OAuth protected-resource metadata is at `/.well-known/oauth-protected-resource`.
 
 ## Image roles
 
@@ -49,14 +70,16 @@ In memory/demo mode, start serve with `CONTEXT_FABRIC_MEMORY=1` (or empty `POSTG
 | `serve` | REST, MCP, authn/authz, retrieval, packets, audit, change feed |
 | `worker` | Outbox relay, projections, deletion/export jobs |
 | `connector` | Isolated source connectors (no DB/NATS/OpenFGA creds) |
-| `migrate` / `bootstrap` | Forward migrations; one-time seeding |
-| `doctor` | Preflight capability and connectivity checks |
-| `backup` / `restore` / `reconcile` | Operational recovery |
-| `all` | Demo-only serve+worker in one process |
+| `migrate` / `bootstrap` | Forward migrations; verify schema + grants |
+| `doctor` | Preflight connectivity checks (does not override argv role) |
+| `backup` / `restore` / `reconcile` | Point to `scripts/*.sh` unless stub ops allowed |
+| `all` | Serve+worker in one process (required while index is in-memory) |
+
+One-shot roles (`migrate`, `bootstrap`, `doctor`, `backup`, `restore`, `reconcile`, `connector`) always honor argv and ignore `CONTEXT_FABRIC_ROLE`. Long-running `serve`/`worker`/`all` still prefer the env var when set (Kubernetes).
 
 ```bash
-docker run --rm ghcr.io/xsama/context-fabric:1.0.0 serve
-docker run --rm ghcr.io/xsama/context-fabric:1.0.0 worker
+docker run --rm ghcr.io/xsama/context-fabric:1.0.0 all
+docker run --rm ghcr.io/xsama/context-fabric:1.0.0 migrate
 ```
 
 ## Profiles
@@ -65,10 +88,10 @@ Concrete configs under [`deploy/profiles/`](deploy/profiles/) (`demo`, `starter`
 
 | Profile | Packaging |
 |---------|-----------|
-| `demo` | Bundled deps, role `all` |
-| `starter` | Compose bundled PG/NATS/MinIO/OpenFGA; external OIDC |
+| `demo` | Bundled deps, role `all`; Local auth + memory OpenFGA OK |
+| `starter` | Compose bundled PG/NATS/MinIO/OpenFGA; external OIDC (fail-closed) |
 | `xsama` | Coolify + private LXCs; public serve only — see [`deploy/coolify/README.md`](deploy/coolify/README.md) |
-| `scaled` | Helm, external deps, independently scalable serve/worker |
+| `scaled` | Helm, external deps; use role `all` until durable index |
 
 Helm chart: [`deploy/helm/context-fabric/`](deploy/helm/context-fabric/).
 

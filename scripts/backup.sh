@@ -8,11 +8,14 @@ mkdir -p "$OUT_DIR"
 
 echo "==> backup bundle -> $OUT_DIR"
 
-if [[ -n "${POSTGRES_DSN:-}" ]]; then
-  echo "==> PostgreSQL pg_dump"
+if [[ -n "${POSTGRES_ADMIN_DSN:-}" ]]; then
+  echo "==> PostgreSQL pg_dump (POSTGRES_ADMIN_DSN)"
+  pg_dump --format=custom --file="$OUT_DIR/postgres.dump" "$POSTGRES_ADMIN_DSN"
+elif [[ -n "${POSTGRES_DSN:-}" ]]; then
+  echo "==> PostgreSQL pg_dump (POSTGRES_DSN; prefer POSTGRES_ADMIN_DSN for full backups)"
   pg_dump --format=custom --file="$OUT_DIR/postgres.dump" "$POSTGRES_DSN"
 else
-  echo "POSTGRES_DSN unset; skipping pg_dump (document DSN for production)"
+  echo "POSTGRES_ADMIN_DSN / POSTGRES_DSN unset; skipping pg_dump (set POSTGRES_ADMIN_DSN for production)"
 fi
 
 if [[ -n "${S3_BUCKET:-}" ]]; then
