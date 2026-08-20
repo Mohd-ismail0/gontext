@@ -9,9 +9,9 @@ import (
 	"github.com/xsama/context-fabric/internal/ports"
 )
 
-// Memory evaluates AuthZ against an in-process relationship map (tests/fixtures).
-// Key shape: object -> relation -> subject -> true
-// Example: relations["resource:res1"]["can_read"]["user:alice"] = true
+// Memory evaluates AuthZ against an in-process relationship map aligned with model.fga.
+// Writable relations only: reader, restricted_reader, owner, assignee, parent, member, …
+// can_read / can_manage are computed (never granted directly).
 type Memory struct {
 	mu         sync.RWMutex
 	Relations  map[string]map[string]map[string]bool
@@ -28,12 +28,26 @@ func NewMemory() *Memory {
 	}
 }
 
-var _ ports.AuthorizationProvider = (*Memory)(nil)
+var (
+	_ ports.AuthorizationProvider = (*Memory)(nil)
+	_ ports.RelationshipWriter    = (*Memory)(nil)
+)
 
-// Grant adds a relationship tuple.
+// Grant adds a relationship tuple. Prefer model-writable relations (reader, owner, parent, member).
 func (m *Memory) Grant(object, relation, subject string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.grantLocked(object, relation, subject)
+}
+
+func (m *Memory) grantLocked(object, relation, subject string) {
+	// Map legacy direct can_read grants to reader for model parity.
+	if relation == "can_read" {
+		relation = "reader"
+	}
+	if relation == "can_delete" || relation == "can_admin" {
+		relation = "owner"
+	}
 	if m.Relations[object] == nil {
 		m.Relations[object] = make(map[string]map[string]bool)
 	}
@@ -41,15 +55,47 @@ func (m *Memory) Grant(object, relation, subject string) {
 		m.Relations[object][relation] = make(map[string]bool)
 	}
 	m.Relations[object][relation][subject] = true
+	if strings.HasPrefix(object, "organization:") && relation == "member" {
+		orgID := strings.TrimPrefix(object, "organization:")
+		if m.OrgMembers[orgID] == nil {
+			m.OrgMembers[orgID] = make(map[string]bool)
+		}
+		m.OrgMembers[orgID][subject] = true
+	}
+}
+
+// Revoke removes a relationship tuple.
+func (m *Memory) Revoke(object, relation, subject string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if relation == "can_read" {
+		relation = "reader"
+	}
+	if m.Relations[object] != nil && m.Relations[object][relation] != nil {
+		delete(m.Relations[object][relation], subject)
+	}
 }
 
 // WriteTuples implements ports.RelationshipWriter.
 func (m *Memory) WriteTuples(_ context.Context, tuples []ports.RelationshipTuple) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for _, t := range tuples {
 		if t.Object == "" || t.Relation == "" || t.Subject == "" {
 			continue
 		}
-		m.Grant(t.Object, t.Relation, t.Subject)
+		m.grantLocked(t.Object, t.Relation, t.Subject)
+	}
+	return nil
+}
+
+// DeleteTuples implements ports.RelationshipWriter.
+func (m *Memory) DeleteTuples(_ context.Context, tuples []ports.RelationshipTuple) error {
+	for _, t := range tuples {
+		if t.Object == "" || t.Relation == "" || t.Subject == "" {
+			continue
+		}
+		m.Revoke(t.Object, t.Relation, t.Subject)
 	}
 	return nil
 }
@@ -62,6 +108,11 @@ func (m *Memory) AddOrgMember(orgID, subject string) {
 		m.OrgMembers[orgID] = make(map[string]bool)
 	}
 	m.OrgMembers[orgID][subject] = true
+	user := subject
+	if !strings.Contains(subject, ":") {
+		user = "user:" + subject
+	}
+	m.grantLocked("organization:"+orgID, "member", user)
 }
 
 func (m *Memory) Check(ctx context.Context, req ports.AuthzCheck) (ports.AuthzDecision, error) {
@@ -101,25 +152,17 @@ func (m *Memory) ResolveCandidateScope(_ context.Context, req ports.ScopeResolve
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	org := req.Principal.OrgID
+	user := formatUser(req.Principal)
+	if m.has("organization:"+org, "member", user) {
+		return ports.CandidateScope{OrgID: org, ReasonCode: "AUTHZ_SCOPE_OK"}, nil
+	}
 	subj := req.Principal.Subject
 	if subj == "" {
 		subj = req.Principal.ID
 	}
 	members := m.OrgMembers[org]
-	if members != nil && (members[subj] || members[formatUser(req.Principal)]) {
+	if members != nil && (members[subj] || members[user] || members["user:"+subj]) {
 		return ports.CandidateScope{OrgID: org, ReasonCode: "AUTHZ_SCOPE_OK"}, nil
-	}
-	// Fall back: if any relation exists for this user in org resources, allow scope.
-	user := formatUser(req.Principal)
-	for obj, rels := range m.Relations {
-		if !strings.HasPrefix(obj, "resource:") && !strings.HasPrefix(obj, "organization:") {
-			continue
-		}
-		for _, subjects := range rels {
-			if subjects[user] {
-				return ports.CandidateScope{OrgID: org, ReasonCode: "AUTHZ_SCOPE_OK"}, nil
-			}
-		}
 	}
 	return ports.CandidateScope{OrgID: org, ReasonCode: "AUTHZ_SCOPE_DENY"}, nil
 }
@@ -136,7 +179,7 @@ func (m *Memory) has(object, relation, subject string) bool {
 	return subs[subject]
 }
 
-// can evaluates OpenFGA-shaped can_read / can_manage including parent inheritance.
+// can evaluates model.fga can_read / can_manage including parent inheritance.
 func (m *Memory) can(object, relation, subject string, visiting map[string]bool) bool {
 	key := object + "|" + relation
 	if visiting[key] {
@@ -146,8 +189,7 @@ func (m *Memory) can(object, relation, subject string, visiting map[string]bool)
 
 	switch relation {
 	case "can_read":
-		if m.has(object, "can_read", subject) ||
-			m.has(object, "reader", subject) ||
+		if m.has(object, "reader", subject) ||
 			m.has(object, "restricted_reader", subject) ||
 			m.has(object, "owner", subject) ||
 			m.has(object, "assignee", subject) {
@@ -163,10 +205,14 @@ func (m *Memory) can(object, relation, subject string, visiting map[string]bool)
 		}
 		return false
 	case "can_manage":
-		if m.has(object, "can_manage", subject) ||
-			m.has(object, "owner", subject) ||
-			m.has(object, "can_admin", subject) {
+		if m.has(object, "owner", subject) {
 			return true
+		}
+		// manager / knowledge_admin from organization
+		for org := range m.Relations[object]["organization"] {
+			if m.has(org, "manager", subject) || m.has(org, "knowledge_admin", subject) {
+				return true
+			}
 		}
 		for parent := range m.Relations[object]["parent"] {
 			if m.can(parent, "can_manage", subject, visiting) {
@@ -174,8 +220,8 @@ func (m *Memory) can(object, relation, subject string, visiting map[string]bool)
 			}
 		}
 		return false
-	case "can_delete":
-		return m.has(object, "owner", subject) || m.can(object, "can_manage", subject, visiting)
+	case "member":
+		return m.has(object, "member", subject)
 	default:
 		return m.has(object, relation, subject)
 	}

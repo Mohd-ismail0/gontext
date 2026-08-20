@@ -23,7 +23,7 @@ export CONTEXT_FABRIC_TOKEN=local:org1:alice:admin
 
 Requires Docker. Prefer memory quickstart first; Compose brings Postgres, MinIO, NATS, and OpenFGA.
 
-**Caveats:** until a durable shared index exists, the app role is `all` (serve+worker in one process). A separate worker cannot share the in-memory index. Demo profile keeps Local auth + memory OpenFGA; starter/xsama/scaled require real OIDC and OpenFGA (fail-closed).
+**Index:** starter/xsama/scaled (and Compose) set `INDEX_BACKEND=postgres` so search projections and the AuthZ tuple outbox share Postgres. Role `all` remains the default single process; split `serve`/`worker` is supported once `INDEX_BACKEND=postgres` is set. Demo profile keeps Local auth + memory OpenFGA; starter/xsama/scaled require real OIDC and OpenFGA (fail-closed).
 
 ```bash
 cp deploy/compose/.env.example deploy/compose/.env
@@ -36,6 +36,8 @@ docker compose -f deploy/compose/docker-compose.minimal.yaml --env-file deploy/c
 ```
 
 Public surface: **serve/`all` only** on port `8080` (`/health/live`, `/health/startup`, `/health/ready`, `/v1/system/version`). Postgres, MinIO, NATS, and OpenFGA stay on the private Compose network.
+
+Ready probes assert pinned OpenFGA model, `RelationshipWriter`, AuthZ outbox health (no dead letters), and migrations including `004_authz_tuple_outbox`.
 
 Useful targets: `make build`, `make test`, `make lint`, `make migrate`, `make doctor`.
 

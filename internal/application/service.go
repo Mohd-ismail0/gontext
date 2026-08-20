@@ -543,6 +543,15 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 			}); err != nil {
 				return nil, platform.ErrUnavailable("change feed append failed: " + err.Error())
 			}
+			if result.EdgeCount > 0 {
+				if err := s.ChangeFeed.Append(ctx, ports.ChangeEvent{
+					EventID: platform.NewEventID(), OrgID: orgID, ResourceID: result.ResourceID,
+					RevisionID: result.RevisionID, Action: "graph.edges_upserted",
+					Cursor: result.RevisionID + ":edges", OccurredAt: time.Now().UTC(),
+				}); err != nil {
+					return nil, platform.ErrUnavailable("change feed edge append failed: " + err.Error())
+				}
+			}
 		} else if s.Changes != nil {
 			if err := s.Changes.AppendChange(ctx, ports.ChangeEvent{
 				EventID: platform.NewEventID(), OrgID: orgID, ResourceID: result.ResourceID,
@@ -550,19 +559,30 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 			}); err != nil {
 				return nil, platform.ErrUnavailable("change append failed: " + err.Error())
 			}
+			if result.EdgeCount > 0 {
+				if err := s.Changes.AppendChange(ctx, ports.ChangeEvent{
+					EventID: platform.NewEventID(), OrgID: orgID, ResourceID: result.ResourceID,
+					RevisionID: result.RevisionID, Action: "graph.edges_upserted",
+					Cursor: result.RevisionID + ":edges", OccurredAt: time.Now().UTC(),
+				}); err != nil {
+					return nil, platform.ErrUnavailable("change edge append failed: " + err.Error())
+				}
+			}
 		}
 		if s.Index != nil && result.ResourceID != "" {
 			rec, err := s.Ledger.GetRecord(ctx, orgID, result.ResourceID)
 			if err != nil {
 				return nil, platform.ErrUnavailable("index load record failed: " + err.Error())
 			}
-			if err := s.Index.Upsert(ctx, []ports.IndexDocument{{
-				ResourceID: result.ResourceID, RevisionID: result.RevisionID, OrgID: orgID,
-				Text: rec.Title, Labels: rec.Labels, Attributes: map[string]string{
-					"classification": rec.Classification, "purpose_allowlist": "support",
-				},
-			}}); err != nil {
-				return nil, platform.ErrUnavailable("index upsert failed: " + err.Error())
+			if rec.State != ports.LifecyclePlaceholder && rec.State != ports.LifecycleEnsured {
+				if err := s.Index.Upsert(ctx, []ports.IndexDocument{{
+					ResourceID: result.ResourceID, RevisionID: result.RevisionID, OrgID: orgID,
+					Text: rec.Title, Labels: rec.Labels, Attributes: map[string]string{
+						"classification": rec.Classification, "purpose_allowlist": "support",
+					},
+				}}); err != nil {
+					return nil, platform.ErrUnavailable("index upsert failed: " + err.Error())
+				}
 			}
 			seedMemoryAuthzResource(s.Authz, orgID, result.ResourceID, principal)
 		}
@@ -1221,6 +1241,5 @@ func seedMemoryAuthzResource(authz ports.AuthorizationProvider, orgID, resourceI
 	m.AddOrgMember(orgID, user)
 	m.Grant("resource:"+resourceID, "organization", "organization:"+orgID)
 	m.Grant("resource:"+resourceID, "owner", user)
-	m.Grant("resource:"+resourceID, "can_read", user)
-	m.Grant("resource:"+resourceID, "can_delete", user)
+	m.Grant("resource:"+resourceID, "reader", user)
 }

@@ -116,7 +116,9 @@
               "mapping_specs",
               "audit",
               "authz_model_pin",
-              "tombstones"
+              "tombstones",
+              "graph_edges",
+              "authz_tuples"
             ]
           },
           "sha256": {

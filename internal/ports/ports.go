@@ -19,9 +19,10 @@ type AuthorizationProvider interface {
 	ResolveCandidateScope(ctx context.Context, req ScopeResolve) (CandidateScope, error)
 }
 
-// RelationshipWriter persists AuthZ relationship tuples (optional; demo/memory or OpenFGA write API).
+// RelationshipWriter persists AuthZ relationship tuples (OpenFGA write API / memory).
 type RelationshipWriter interface {
 	WriteTuples(ctx context.Context, tuples []RelationshipTuple) error
+	DeleteTuples(ctx context.Context, tuples []RelationshipTuple) error
 }
 
 // RelationshipTuple is one OpenFGA-shaped relationship.
@@ -29,6 +30,25 @@ type RelationshipTuple struct {
 	Object   string `json:"object"`
 	Relation string `json:"relation"`
 	Subject  string `json:"user"`
+}
+
+// AuthzTupleOp is a durable AuthZ outbox operation (ADR 0014).
+type AuthzTupleOp struct {
+	ID         string    `json:"id"`
+	OrgID      string    `json:"organization_id"`
+	Operation  string    `json:"operation"` // write | delete
+	Object     string    `json:"object"`
+	Relation   string    `json:"relation"`
+	Subject    string    `json:"subject"`
+	EdgeID     string    `json:"edge_id,omitempty"`
+	Status     string    `json:"status"` // pending | applied | dead
+	Attempts   int       `json:"attempts"`
+	LastError  string    `json:"last_error,omitempty"`
+	LeaseUntil *time.Time `json:"lease_until,omitempty"`
+	NextAttempt time.Time `json:"next_attempt"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	AppliedAt  *time.Time `json:"applied_at,omitempty"`
 }
 
 // PolicyProvider applies deterministic disclosure/redaction/purpose obligations.
@@ -124,6 +144,21 @@ type LedgerStore interface {
 	GetEdge(ctx context.Context, orgID, edgeID string) (GraphEdge, error)
 	ListEdges(ctx context.Context, orgID string, opts EdgeListOptions) ([]GraphEdge, error)
 	TombstoneEdge(ctx context.Context, tx Tx, orgID, edgeID string) error
+
+	// Transaction-scoped record helpers (ADR 0013 placeholders / TOCTOU-safe intake).
+	GetRecordTx(ctx context.Context, tx Tx, orgID, resourceID string) (Record, error)
+	InsertPlaceholder(ctx context.Context, tx Tx, rec Record) (created bool, err error)
+	PromotePlaceholder(ctx context.Context, tx Tx, rec Record) error
+
+	// Durable AuthZ tuple outbox (ADR 0014).
+	EnqueueAuthzTuple(ctx context.Context, tx Tx, op AuthzTupleOp) error
+	ClaimAuthzTuples(ctx context.Context, limit int, lease time.Duration) ([]AuthzTupleOp, error)
+	MarkAuthzTupleApplied(ctx context.Context, id string, at time.Time) error
+	MarkAuthzTupleFailed(ctx context.Context, id string, attempts int, next time.Time, errMsg string, dead bool) error
+	CountAuthzTuplePending(ctx context.Context, orgID string) (pending int, dead int, err error)
+	ListActiveParentEdgesNeedingAuthz(ctx context.Context, orgID string, limit int) ([]GraphEdge, error)
+	// HasAuthzTupleCoverage reports whether a write/delete for the tuple is pending or applied.
+	HasAuthzTupleCoverage(ctx context.Context, orgID, operation, object, relation, subject string) (bool, error)
 }
 
 // EdgeListOptions filters knowledge-graph edge queries.
@@ -134,3 +169,12 @@ type EdgeListOptions struct {
 	IncludeDead bool // include TOMBSTONED
 	Limit       int
 }
+
+// Lifecycle states for graph nodes.
+const (
+	LifecycleAccepted   = "ACCEPTED"
+	LifecycleIndexed    = "INDEXED"
+	LifecyclePlaceholder = "PLACEHOLDER"
+	LifecycleTombstoned = "TOMBSTONED"
+	LifecycleEnsured    = "ENSURED" // legacy alias; treat as PLACEHOLDER
+)

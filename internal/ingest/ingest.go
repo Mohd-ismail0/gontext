@@ -220,18 +220,6 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 		strings.EqualFold(canonical.Authority, "inferred") ||
 		strings.EqualFold(rec.Kind, "observation")
 
-	existing, getErr := s.Ledger.GetRecord(ctx, req.OrgID, rec.ResourceID)
-	hasExisting := getErr == nil
-	if generated && hasExisting {
-		if isSourceOfTruth(existing) {
-			// Generated observations cannot overwrite source_of_truth facts.
-			if wouldOverwriteSoT(existing, rec) {
-				return Result{}, platform.ErrForbidden("generated observation cannot overwrite source_of_truth")
-			}
-			rec = preserveSoT(existing, rec)
-		}
-	}
-
 	rev := ports.Revision{
 		RevisionID:  platform.NewRevisionID(),
 		ResourceID:  rec.ResourceID,
@@ -247,12 +235,10 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 		rev.Attributes["observation"] = "generated"
 	}
 	rec.CurrentRevID = rev.RevisionID
-	if !hasExisting {
-		rec.CreatedAt = now
-	} else {
-		rec.CreatedAt = existing.CreatedAt
-	}
 	rec.UpdatedAt = now
+	if rec.State == "" {
+		rec.State = ports.LifecycleAccepted
+	}
 
 	outboxPayload, _ := json.Marshal(map[string]any{
 		"event_id":    eventID,
@@ -263,7 +249,26 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 	})
 
 	err = s.Ledger.WithOrgTx(ctx, req.OrgID, func(ctx context.Context, tx ports.Tx) error {
-		if err := s.Ledger.UpsertRecord(ctx, tx, rec); err != nil {
+		existing, getErr := s.Ledger.GetRecordTx(ctx, tx, req.OrgID, rec.ResourceID)
+		hasExisting := getErr == nil
+		if getErr != nil {
+			if ae, ok := platform.AsAPIError(getErr); !ok || ae.HTTPStatus != 404 {
+				return getErr
+			}
+		}
+		if hasExisting {
+			if generated && isSourceOfTruth(existing) {
+				if wouldOverwriteSoT(existing, rec) {
+					return platform.ErrForbidden("generated observation cannot overwrite source_of_truth")
+				}
+				rec = preserveSoT(existing, rec)
+			}
+			rec.CreatedAt = existing.CreatedAt
+		} else {
+			rec.CreatedAt = now
+		}
+
+		if err := s.Ledger.PromotePlaceholder(ctx, tx, rec); err != nil {
 			return err
 		}
 		if err := s.Ledger.AppendRevision(ctx, tx, rev); err != nil {
@@ -273,11 +278,11 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 			return err
 		}
 		if err := s.Ledger.EnqueueOutbox(ctx, tx, ports.OutboxEntry{
-			ID:      eventID,
-			OrgID:   req.OrgID,
-			Subject: OutboxSubject,
-			Payload: outboxPayload,
-			Headers: map[string]string{"Nats-Msg-Id": eventID, "event_id": eventID},
+			ID:        eventID,
+			OrgID:     req.OrgID,
+			Subject:   OutboxSubject,
+			Payload:   outboxPayload,
+			Headers:   map[string]string{"Nats-Msg-Id": eventID, "event_id": eventID},
 			CreatedAt: now,
 		}); err != nil {
 			return err
@@ -308,10 +313,6 @@ func (s *IntakeService) Intake(ctx context.Context, req Request) (Result, error)
 				}
 			}
 		}
-		return Result{}, err
-	}
-
-	if err := s.syncAuthzParents(ctx, canonical.Edges); err != nil {
 		return Result{}, err
 	}
 
@@ -501,20 +502,39 @@ func (s *IntakeService) writeEdges(ctx context.Context, tx ports.Tx, orgID, seed
 				known[e.ToID] = true
 			}
 		}
+		edgeID := deterministicEdgeID(orgID, e.FromID, e.ToID, e.Predicate)
 		edge := ports.GraphEdge{
-			EdgeID:     deterministicEdgeID(orgID, e.FromID, e.ToID, e.Predicate),
+			EdgeID:     edgeID,
 			OrgID:      orgID,
 			FromID:     e.FromID,
 			ToID:       e.ToID,
 			Predicate:  e.Predicate,
 			Confidence: e.Confidence,
 			State:      "ACTIVE",
+			SyncAuthz:  e.SyncAuthzParent && e.Predicate == ports.EdgeParent,
 			Attributes: map[string]string{"source": "mapping"},
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		}
 		if err := s.Ledger.UpsertEdge(ctx, tx, edge); err != nil {
 			return err
+		}
+		if edge.SyncAuthz {
+			if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
+				ID:        platform.NewEventID(),
+				OrgID:     orgID,
+				Operation: "write",
+				Object:    "resource:" + e.FromID,
+				Relation:  "parent",
+				Subject:   "resource:" + e.ToID,
+				EdgeID:    edgeID,
+				Status:    "pending",
+				CreatedAt: now,
+				UpdatedAt: now,
+				NextAttempt: now,
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -524,13 +544,10 @@ func (s *IntakeService) ensureEndpoint(ctx context.Context, tx ports.Tx, orgID, 
 	if resourceID == "" {
 		return nil
 	}
-	if _, err := s.Ledger.GetRecord(ctx, orgID, resourceID); err == nil {
+	if _, err := s.Ledger.GetRecordTx(ctx, tx, orgID, resourceID); err == nil {
 		return nil
-	} else if platform.IsAPIError(err) {
-		ae, _ := platform.AsAPIError(err)
-		if ae == nil || ae.HTTPStatus != 404 {
-			return err
-		}
+	} else if ae, ok := platform.AsAPIError(err); ok && ae.HTTPStatus == 404 {
+		// create placeholder
 	} else {
 		return err
 	}
@@ -547,33 +564,13 @@ func (s *IntakeService) ensureEndpoint(ctx context.Context, tx ports.Tx, orgID, 
 		Title:          title,
 		Classification: "internal",
 		ExternalID:     externalID,
-		State:          "ENSURED",
-		Attributes:     map[string]string{"ensured": "true"},
+		State:          ports.LifecyclePlaceholder,
+		Attributes:     map[string]string{"placeholder": "true"},
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	return s.Ledger.UpsertRecord(ctx, tx, rec)
-}
-
-func (s *IntakeService) syncAuthzParents(ctx context.Context, edges []mapping.CanonicalEdge) error {
-	if s.Authz == nil || len(edges) == 0 {
-		return nil
-	}
-	tuples := make([]ports.RelationshipTuple, 0, len(edges))
-	for _, e := range edges {
-		if !e.SyncAuthzParent || e.Predicate != ports.EdgeParent {
-			continue
-		}
-		tuples = append(tuples, ports.RelationshipTuple{
-			Object:   "resource:" + e.FromID,
-			Relation: "parent",
-			Subject:  "resource:" + e.ToID,
-		})
-	}
-	if len(tuples) == 0 {
-		return nil
-	}
-	return s.Authz.WriteTuples(ctx, tuples)
+	_, err := s.Ledger.InsertPlaceholder(ctx, tx, rec)
+	return err
 }
 
 func deterministicEdgeID(orgID, fromID, toID, predicate string) string {

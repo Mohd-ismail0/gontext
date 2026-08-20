@@ -217,6 +217,59 @@ func TestGraphHidesDeniedNeighbors(t *testing.T) {
 	}
 }
 
+func TestGraphHidesPlaceholders(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	authz := openfga.NewMemory()
+	org := "org_acme_0001"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Acme"})
+
+	seed := ports.Record{ResourceID: "res_seed", OrgID: org, Kind: "note", Title: "Seed", Classification: "internal", CurrentRevID: "r1", State: "INDEXED"}
+	ph := ports.Record{ResourceID: "res_ph", OrgID: org, Kind: "resource", Title: "Stub", Classification: "internal", State: ports.LifecyclePlaceholder}
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		_ = store.UpsertRecord(ctx, tx, seed)
+		if _, err := store.InsertPlaceholder(ctx, tx, ph); err != nil {
+			return err
+		}
+		return store.UpsertEdge(ctx, tx, ports.GraphEdge{
+			EdgeID: "e-ph", OrgID: org, FromID: "res_seed", ToID: "res_ph", Predicate: ports.EdgeMentions, State: "ACTIVE",
+		})
+	})
+	authz.AddOrgMember(org, "alice")
+	authz.Grant("resource:res_seed", "reader", "user:alice")
+	authz.Grant("resource:res_ph", "reader", "user:alice")
+
+	pipe := &retrieval.Pipeline{
+		Identity: authn.NewLocal(),
+		Authz:    authz,
+		Policy:   policy.New(),
+		Ledger:   store,
+		Index:    memory.NewIndex(),
+		Audit:    audit.NewMemory(),
+	}
+	pkt, err := pipe.Graph(ctx, retrieval.Request{
+		Credentials: ports.Credentials{BearerToken: "local:org_acme_0001:alice:employee"},
+		OrgID:       org,
+		Purpose:     "support",
+		ResourceID:  "res_seed",
+		Depth:       1,
+		Action:      "context.graph",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range pkt.Nodes {
+		if n.ResourceID == "res_ph" {
+			t.Fatal("placeholder must not be retrievable")
+		}
+	}
+	for _, e := range pkt.Edges {
+		if e.ToID == "res_ph" || e.FromID == "res_ph" {
+			t.Fatalf("placeholder edge must not leak: %#v", e)
+		}
+	}
+}
+
 func TestGraphParentInheritance(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewStore()

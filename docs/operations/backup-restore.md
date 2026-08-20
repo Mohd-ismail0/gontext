@@ -6,11 +6,12 @@ Context Fabric treats PostgreSQL as the authoritative ledger, S3-compatible obje
 
 | Component | Artifact | Notes |
 |-----------|----------|-------|
-| PostgreSQL | logical dump (`pg_dump`) | Include all schemas; prefer consistent snapshot |
+| PostgreSQL | logical dump (`pg_dump`) | Include `records`, `revisions`, `graph_edges`, `authz_tuple_outbox`, RLS roles |
 | Evidence (S3/MinIO) | bucket sync | Versioned objects; preserve delete markers |
-| OpenFGA | store/model/tuple export | Placeholder until operator tooling lands |
+| OpenFGA | store/model/tuple export | Restore tuples **after** ledger edges; outbox worker reconciles `sync_authz` parents |
 | Config | profile + secret *references* | Never dump live secrets into the bundle |
 
+Org export manifests (`context-fabric.export/v1`) round-trip `graph_edges` and an `authz_tuples` relationship manifest (no secrets). Import re-enqueues AuthZ writes for active `sync_authz` parent edges.
 ## Backup procedure
 
 1. Quiesce or snapshot writers when possible (`worker` drain).

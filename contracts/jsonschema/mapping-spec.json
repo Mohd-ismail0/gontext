@@ -150,7 +150,7 @@
         },
         "parent_resource_id": {
           "$ref": "#/$defs/JsonPathOrTemplate",
-          "description": "Convenience mapping: emits a knowledge parent edge from the mapped resource to this target. Does not grant ACL by itself; when sync_authz_parent is enabled (default for parent), an OpenFGA parent tuple is also written."
+          "description": "Convenience mapping: emits a knowledge parent edge from the mapped resource to this target. Does not grant ACL by itself. When sync_authz_parent is true (default for explicit parent_resource_id), an OpenFGA parent tuple is enqueued via the AuthZ outbox in the same ledger transaction. visibility_ref never implies sync_authz."
         }
       }
     },

@@ -2,29 +2,27 @@
 
 ## Status
 
-Accepted
+Accepted (hardened)
 
 ## Context
 
-Retrieval today returns flat citation lists. Organizational context is inherently relational (case → notes → messages → people → policies). Operators and agents need a single mental model: the plane is a knowledge graph, and each caller only sees the subgraph their access profile permits.
-
-OpenFGA already models resource `parent` inheritance for `can_read` / `can_manage`. That is authorization topology, not the knowledge graph. Derived “graph facts” must never become the ACL system (ADR 0005, stress-test Graphiti guidance).
+Organizational context is inherently relational. Callers must see only the subgraph their access profile permits. Knowledge edges must never become the ACL system.
 
 ## Decision
 
-1. **Every canonical `Record` is a graph node.** Kinds (`document`, `case`, `person`, `observation`, …) are node types, not separate stores.
-2. **Knowledge edges are first-class ledger objects** (`graph_edges`): directed, typed predicates (`parent`, `related_to`, `mentions`, `derived_from`, `assigned_to`, …), org-scoped, tombstoneable. Edges are evidence of relationship, not grants.
-3. **Access profile = OpenFGA ReBAC + Go PolicyProvider obligations.** A principal’s visible universe is the set of nodes for which `can_read` (or stronger) allows, after purpose/classification policy.
-4. **Edge visibility rule:** an edge is returned only when **both** endpoints are independently allowed for the caller. Knowing that A→B exists must not leak the existence of a denied node.
-5. **Traversal is AuthZ-first:** resolve candidates → expand edge frontier with hard caps (`depth`, `max_nodes`) → `BatchCheck` every node → hydrate → apply policy. Never hydrate then filter; never trust client-supplied edge sets.
-6. **OpenFGA `parent` remains the ACL inheritance edge.** When a knowledge `parent` edge is written, operators/connectors SHOULD also write the matching OpenFGA `parent` tuple so inheritance stays consistent. Knowledge `related_to` / `mentions` never imply AuthZ.
-7. **Connectors and MappingSpec emit edges on intake** via `edges[]`, `parent_resource_id`, or auto-parent from `visibility_ref`. Missing endpoints may be stub-ensured; `parent` may sync an OpenFGA inheritance tuple (never a direct reader grant).
-8. **All read surfaces are graph queries.** `search`, `get`, `brief`, and `graph` return a `ContextPacket` that includes `nodes` and `edges` (plus citations for retrieval UX). Search is “ranked entry points into your visible subgraph.”
-9. **External temporal graph engines (e.g. Graphiti) stay optional projections** rebuilt from the ledger; they are not the source of truth or of authorization.
+1. **Every canonical `Record` is a graph node.** Kinds (`document`, `case`, `person`, `observation`, `PLACEHOLDER`, …) are node types, not separate stores.
+2. **Knowledge edges are first-class ledger objects** (`graph_edges`): directed, typed predicates (`parent`, `related_to`, `mentions`, `derived_from`, `assigned_to`, …), org-scoped, tombstoneable. Edges are facts, not grants.
+3. **Access profile = OpenFGA ReBAC + Go PolicyProvider obligations.** A principal’s visible universe is the set of nodes that independently pass org isolation, OpenFGA `can_read`, policy/purpose/classification, and lifecycle checks.
+4. **Edge visibility rule:** an edge is returned only when **both** endpoints are in the final visible-node set after AuthZ **and** policy. No dangling endpoints, no existence leaks via counts/titles/topology.
+5. **Traversal is AuthZ-first then policy-final:** candidates → bounded expansion → `BatchCheck` → hydrate → policy/lifecycle filter → edge filter on the surviving node set. Never hydrate then filter; never trust client-supplied edge sets.
+6. **OpenFGA `parent` is the ACL inheritance edge.** Knowledge `parent` edges that request inheritance enqueue durable AuthZ tuple outbox work (ADR 0014). `related_to` / `mentions` never sync AuthZ.
+7. **`visibility_ref` is source metadata, not an ACL grant.** Only explicit `parent_resource_id` or reviewed MappingSpec parent rules may request AuthZ inheritance.
+8. **`PLACEHOLDER` nodes** are created for missing edge endpoints: non-indexable, non-searchable, non-retrievable, no default reader grant. Authoritative intake promotes them atomically to real records.
+9. **All read surfaces are graph queries.** `search`, `get`, `brief`, and `graph` return a `ContextPacket` with `nodes`, `edges`, citations, and truncation metadata.
+10. **External temporal graph engines stay optional projections** rebuilt from the ledger; they are not truth or authorization.
 
 ## Consequences
 
-- Product language and APIs treat context as a governed subgraph, not a document search box.
-- Connectors and MappingSpec grow the graph on every accepted event.
-- MCP/REST grow a neighborhood/`graph` tool without forking AuthZ semantics.
-- Tests must prove denied neighbors are omitted (no stubs that leak titles/IDs) and that tags/labels never widen node access.
+- Production OpenFGA and memory AuthZ must enforce the same pinned model.
+- Export/import, backup/restore, and conformance must include graph edges and AuthZ sync state.
+- Tests must prove denied/placeholder neighbors never leak.

@@ -15,7 +15,7 @@ import (
 	"github.com/xsama/context-fabric/internal/ports"
 )
 
-// Client is an HTTP OpenFGA AuthorizationProvider wrapper.
+// Client is an HTTP OpenFGA AuthorizationProvider + RelationshipWriter.
 type Client struct {
 	APIURL     string
 	StoreID    string
@@ -25,7 +25,6 @@ type Client struct {
 }
 
 // NewFromEnv constructs a Client from OPENFGA_API_URL, OPENFGA_STORE_ID, OPENFGA_MODEL_ID.
-// OPENFGA_STORE_ID_FILE, when set, supplies the store id if OPENFGA_STORE_ID is empty/placeholder.
 func NewFromEnv() (*Client, error) {
 	api := firstNonEmpty(os.Getenv("OPENFGA_API_URL"), os.Getenv("OPENFGA_URL"))
 	store := strings.TrimSpace(os.Getenv("OPENFGA_STORE_ID"))
@@ -52,15 +51,16 @@ func NewFromEnv() (*Client, error) {
 	}, nil
 }
 
-var _ ports.AuthorizationProvider = (*Client)(nil)
+var (
+	_ ports.AuthorizationProvider = (*Client)(nil)
+	_ ports.RelationshipWriter    = (*Client)(nil)
+)
 
 // ConsistencyPreference maps ports.ConsistencyMode to OpenFGA preference strings.
 func ConsistencyPreference(mode ports.ConsistencyMode) string {
 	switch mode {
 	case ports.ConsistencyFullyConsistent:
 		return "HIGHER_CONSISTENCY"
-	case ports.ConsistencyMinLatency, "":
-		return "MINIMIZE_LATENCY"
 	default:
 		return "MINIMIZE_LATENCY"
 	}
@@ -81,25 +81,6 @@ func (c *Client) BatchCheck(ctx context.Context, reqs []ports.AuthzCheck) ([]por
 	if len(reqs) == 0 {
 		return nil, nil
 	}
-	consistency := ConsistencyPreference(reqs[0].Consistency)
-	tupleKeys := make([]map[string]string, 0, len(reqs))
-	for _, r := range reqs {
-		tupleKeys = append(tupleKeys, map[string]string{
-			"user":     formatUser(r.Principal),
-			"relation": mapRelation(r.Action),
-			"object":   formatObject(r.ResourceID),
-		})
-	}
-	body := map[string]any{
-		"checks": []map[string]any{
-			{
-				"tuple_keys":  tupleKeys,
-				"consistency": consistency,
-			},
-		},
-		"authorization_model_id": c.ModelID,
-	}
-	// OpenFGA batch-check API shape varies; use per-check fallback for compatibility.
 	out := make([]ports.AuthzDecision, len(reqs))
 	for i, r := range reqs {
 		allowed, err := c.checkOne(ctx, r)
@@ -114,7 +95,6 @@ func (c *Client) BatchCheck(ctx context.Context, reqs []ports.AuthzCheck) ([]por
 			CheckedAt:     time.Now().UTC(),
 		}
 	}
-	_ = body
 	return out, nil
 }
 
@@ -138,20 +118,98 @@ func (c *Client) checkOne(ctx context.Context, req ports.AuthzCheck) (bool, erro
 }
 
 func (c *Client) ResolveCandidateScope(ctx context.Context, req ports.ScopeResolve) (ports.CandidateScope, error) {
-	// v1: coarse org membership check; resource IDs come from index + batch check.
-	dec, err := c.Check(ctx, ports.AuthzCheck{
-		Principal:   req.Principal,
-		Action:      "can_read",
-		ResourceID:  "organization:" + req.Principal.OrgID,
-		Consistency: req.Consistency,
-	})
-	if err != nil {
+	// Coarse org membership: organization#member (model.fga), not can_read.
+	user := formatUser(req.Principal)
+	payload := map[string]any{
+		"tuple_key": map[string]string{
+			"user":     user,
+			"relation": "member",
+			"object":   "organization:" + req.Principal.OrgID,
+		},
+		"authorization_model_id": c.ModelID,
+		"consistency":            ConsistencyPreference(req.Consistency),
+	}
+	var resp struct {
+		Allowed bool `json:"allowed"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/stores/%s/check", c.StoreID), payload, &resp); err != nil {
 		return ports.CandidateScope{}, err
 	}
-	if !dec.Allowed {
+	if !resp.Allowed {
 		return ports.CandidateScope{OrgID: req.Principal.OrgID, ReasonCode: "AUTHZ_SCOPE_DENY"}, nil
 	}
 	return ports.CandidateScope{OrgID: req.Principal.OrgID, ReasonCode: "AUTHZ_SCOPE_OK"}, nil
+}
+
+// WriteTuples implements ports.RelationshipWriter via OpenFGA /write.
+func (c *Client) WriteTuples(ctx context.Context, tuples []ports.RelationshipTuple) error {
+	return c.mutateTuples(ctx, tuples, false)
+}
+
+// DeleteTuples implements ports.RelationshipWriter via OpenFGA /write deletes.
+func (c *Client) DeleteTuples(ctx context.Context, tuples []ports.RelationshipTuple) error {
+	return c.mutateTuples(ctx, tuples, true)
+}
+
+func (c *Client) mutateTuples(ctx context.Context, tuples []ports.RelationshipTuple, delete bool) error {
+	if len(tuples) == 0 {
+		return nil
+	}
+	const batchSize = 40
+	for i := 0; i < len(tuples); i += batchSize {
+		end := i + batchSize
+		if end > len(tuples) {
+			end = len(tuples)
+		}
+		keys := make([]map[string]string, 0, end-i)
+		for _, t := range tuples[i:end] {
+			if t.Object == "" || t.Relation == "" || t.Subject == "" {
+				continue
+			}
+			keys = append(keys, map[string]string{
+				"user":     t.Subject,
+				"relation": t.Relation,
+				"object":   t.Object,
+			})
+		}
+		if len(keys) == 0 {
+			continue
+		}
+		writes := map[string]any{}
+		if delete {
+			writes["deletes"] = map[string]any{"tuple_keys": keys}
+		} else {
+			writes["writes"] = map[string]any{"tuple_keys": keys}
+		}
+		payload := map[string]any{
+			"authorization_model_id": c.ModelID,
+			"writes":                 writes["writes"],
+			"deletes":                writes["deletes"],
+		}
+		// Clean nil keys for OpenFGA.
+		if delete {
+			payload = map[string]any{
+				"authorization_model_id": c.ModelID,
+				"deletes":                map[string]any{"tuple_keys": keys},
+			}
+		} else {
+			payload = map[string]any{
+				"authorization_model_id": c.ModelID,
+				"writes":                map[string]any{"tuple_keys": keys},
+			}
+		}
+		if err := c.postJSON(ctx, fmt.Sprintf("/stores/%s/write", c.StoreID), payload, nil); err != nil {
+			// Treat already-exists / not-found as idempotent success for retries.
+			msg := err.Error()
+			if strings.Contains(strings.ToLower(msg), "already exists") ||
+				strings.Contains(strings.ToLower(msg), "cannot write a tuple which already exists") ||
+				(delete && (strings.Contains(strings.ToLower(msg), "not found") || strings.Contains(strings.ToLower(msg), "does not exist"))) {
+				continue
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, payload any, out any) error {
@@ -215,14 +273,11 @@ func mapRelation(action string) string {
 	switch action {
 	case "context.search", "context.get", "context.brief", "context.graph", "can_read", "reader":
 		return "can_read"
-	case "can_manage", "context.manage", "can_admin", "can_delete", "context.delete":
-		if action == "context.delete" {
-			return "can_delete"
-		}
-		if action == "can_admin" || action == "can_manage" || action == "context.manage" {
-			return "can_manage"
-		}
-		return "can_delete"
+	case "can_manage", "context.manage", "can_admin", "context.delete", "can_delete":
+		// model.fga has no can_delete; deletions require can_manage.
+		return "can_manage"
+	case "member":
+		return "member"
 	default:
 		if action == "" {
 			return "can_read"

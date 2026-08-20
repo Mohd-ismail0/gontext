@@ -503,23 +503,31 @@ func (s *Store) UpsertEdge(ctx context.Context, tx ports.Tx, edge ports.GraphEdg
 		edge.State = "ACTIVE"
 	}
 	pg := mustPgTx(tx)
-	_, err := pg.Exec(ctx, `
-UPDATE graph_edges SET lifecycle_state='TOMBSTONED', updated_at=$1
-WHERE organization_id=$2 AND from_id=$3 AND to_id=$4 AND predicate=$5
-  AND lifecycle_state='ACTIVE' AND id<>$6`,
-		edge.UpdatedAt, edge.OrgID, edge.FromID, edge.ToID, edge.Predicate, edge.EdgeID)
-	if err != nil {
+	// Idempotent update of existing active triple.
+	var existingID string
+	err := pg.QueryRow(ctx, `
+SELECT id FROM graph_edges
+WHERE organization_id=$1 AND from_id=$2 AND to_id=$3 AND predicate=$4 AND lifecycle_state='ACTIVE'
+LIMIT 1`, edge.OrgID, edge.FromID, edge.ToID, edge.Predicate).Scan(&existingID)
+	if err == nil && existingID != "" {
+		_, err = pg.Exec(ctx, `
+UPDATE graph_edges SET confidence=$1, sync_authz=$2, attributes=$3, updated_at=$4
+WHERE organization_id=$5 AND id=$6`,
+			edge.Confidence, edge.SyncAuthz, mustJSON(edge.Attributes), edge.UpdatedAt, edge.OrgID, existingID)
+		return err
+	}
+	if err != nil && err != pgx.ErrNoRows {
 		return err
 	}
 	_, err = pg.Exec(ctx, `
-INSERT INTO graph_edges (id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, attributes, created_at, updated_at)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+INSERT INTO graph_edges (id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, sync_authz, attributes, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 ON CONFLICT (organization_id, id) DO UPDATE SET
   from_id=EXCLUDED.from_id, to_id=EXCLUDED.to_id, predicate=EXCLUDED.predicate,
   confidence=EXCLUDED.confidence, lifecycle_state=EXCLUDED.lifecycle_state,
-  attributes=EXCLUDED.attributes, updated_at=EXCLUDED.updated_at`,
+  sync_authz=EXCLUDED.sync_authz, attributes=EXCLUDED.attributes, updated_at=EXCLUDED.updated_at`,
 		edge.EdgeID, edge.OrgID, edge.FromID, edge.ToID, edge.Predicate, edge.Confidence,
-		edge.State, mustJSON(edge.Attributes), edge.CreatedAt, edge.UpdatedAt)
+		edge.State, edge.SyncAuthz, mustJSON(edge.Attributes), edge.CreatedAt, edge.UpdatedAt)
 	return err
 }
 
@@ -528,9 +536,9 @@ func (s *Store) GetEdge(ctx context.Context, orgID, edgeID string) (ports.GraphE
 	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		var attrs []byte
 		err := tx.QueryRow(ctx, `
-SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, attributes, created_at, updated_at
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, COALESCE(sync_authz,false), attributes, created_at, updated_at
 FROM graph_edges WHERE organization_id=$1 AND id=$2`, orgID, edgeID).
-			Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &attrs, &e.CreatedAt, &e.UpdatedAt)
+			Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &e.SyncAuthz, &attrs, &e.CreatedAt, &e.UpdatedAt)
 		if err == pgx.ErrNoRows {
 			return platform.ErrNotFound("edge not found")
 		}
@@ -550,7 +558,7 @@ func (s *Store) ListEdges(ctx context.Context, orgID string, opts ports.EdgeList
 	var out []ports.GraphEdge
 	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		q := `
-SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, attributes, created_at, updated_at
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, COALESCE(sync_authz,false), attributes, created_at, updated_at
 FROM graph_edges WHERE organization_id=$1`
 		args := []any{orgID}
 		argN := 2
@@ -567,7 +575,7 @@ FROM graph_edges WHERE organization_id=$1`
 			args = append(args, opts.Predicates)
 			argN++
 		}
-		q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, argN)
+		q += fmt.Sprintf(` ORDER BY from_id ASC, predicate ASC, to_id ASC, created_at ASC LIMIT $%d`, argN)
 		args = append(args, opts.Limit)
 
 		rows, err := tx.Query(ctx, q, args...)
@@ -578,7 +586,7 @@ FROM graph_edges WHERE organization_id=$1`
 		for rows.Next() {
 			var e ports.GraphEdge
 			var attrs []byte
-			if err := rows.Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &attrs, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			if err := rows.Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &e.SyncAuthz, &attrs, &e.CreatedAt, &e.UpdatedAt); err != nil {
 				return err
 			}
 			_ = json.Unmarshal(attrs, &e.Attributes)
@@ -601,6 +609,276 @@ WHERE organization_id=$1 AND id=$2`, orgID, edgeID)
 		return platform.ErrNotFound("edge not found")
 	}
 	return nil
+}
+
+func (s *Store) GetRecordTx(ctx context.Context, tx ports.Tx, orgID, resourceID string) (ports.Record, error) {
+	pg := mustPgTx(tx)
+	var r ports.Record
+	var attrs []byte
+	err := pg.QueryRow(ctx, `
+SELECT id, organization_id, resource_type, COALESCE(title,''), COALESCE(classification,'internal'),
+       COALESCE(tags,'{}'), COALESCE(source_system,''), COALESCE(source_external_id,''),
+       COALESCE(current_revision_id,''), COALESCE(lifecycle_state,''), attributes, created_at, updated_at
+FROM resources WHERE organization_id=$1 AND id=$2`, orgID, resourceID).
+		Scan(&r.ResourceID, &r.OrgID, &r.Kind, &r.Title, &r.Classification, &r.Labels,
+			&r.SourceSystem, &r.ExternalID, &r.CurrentRevID, &r.State, &attrs, &r.CreatedAt, &r.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		return r, platform.ErrNotFound("record not found")
+	}
+	if err != nil {
+		return r, err
+	}
+	_ = json.Unmarshal(attrs, &r.Attributes)
+	return r, nil
+}
+
+func (s *Store) InsertPlaceholder(ctx context.Context, tx ports.Tx, rec ports.Record) (bool, error) {
+	pg := mustPgTx(tx)
+	now := time.Now().UTC()
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	rec.UpdatedAt = now
+	if rec.State == "" {
+		rec.State = ports.LifecyclePlaceholder
+	}
+	if rec.Attributes == nil {
+		rec.Attributes = map[string]string{}
+	}
+	rec.Attributes["placeholder"] = "true"
+	ct, err := pg.Exec(ctx, `
+INSERT INTO resources (id, organization_id, resource_type, title, classification, tags, source_system, source_external_id, current_revision_id, lifecycle_state, attributes, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+ON CONFLICT (organization_id, id) DO NOTHING`,
+		rec.ResourceID, rec.OrgID, nullStr(rec.Kind, "resource"), rec.Title, nullStr(rec.Classification, "internal"),
+		rec.Labels, rec.SourceSystem, rec.ExternalID, rec.CurrentRevID, rec.State,
+		mustJSON(rec.Attributes), rec.CreatedAt, rec.UpdatedAt)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+func (s *Store) PromotePlaceholder(ctx context.Context, tx ports.Tx, rec ports.Record) error {
+	pg := mustPgTx(tx)
+	now := time.Now().UTC()
+	rec.UpdatedAt = now
+	if rec.State == "" || rec.State == ports.LifecyclePlaceholder || rec.State == ports.LifecycleEnsured {
+		rec.State = ports.LifecycleAccepted
+	}
+	if rec.Attributes == nil {
+		rec.Attributes = map[string]string{}
+	}
+	delete(rec.Attributes, "placeholder")
+	delete(rec.Attributes, "ensured")
+	_, err := pg.Exec(ctx, `
+INSERT INTO resources (id, organization_id, resource_type, title, classification, tags, source_system, source_external_id, current_revision_id, lifecycle_state, attributes, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+ON CONFLICT (organization_id, id) DO UPDATE SET
+  title=EXCLUDED.title,
+  classification=EXCLUDED.classification,
+  tags=EXCLUDED.tags,
+  source_system=EXCLUDED.source_system,
+  source_external_id=EXCLUDED.source_external_id,
+  current_revision_id=EXCLUDED.current_revision_id,
+  lifecycle_state=EXCLUDED.lifecycle_state,
+  attributes=EXCLUDED.attributes,
+  updated_at=EXCLUDED.updated_at
+WHERE resources.lifecycle_state IN ('PLACEHOLDER','ENSURED')
+   OR resources.lifecycle_state = EXCLUDED.lifecycle_state
+   OR TRUE`,
+		rec.ResourceID, rec.OrgID, nullStr(rec.Kind, "document"), rec.Title, nullStr(rec.Classification, "internal"),
+		rec.Labels, rec.SourceSystem, rec.ExternalID, rec.CurrentRevID, rec.State,
+		mustJSON(rec.Attributes), coalesceTime(rec.CreatedAt, now), rec.UpdatedAt)
+	return err
+}
+
+func coalesceTime(t, def time.Time) time.Time {
+	if t.IsZero() {
+		return def
+	}
+	return t
+}
+
+func (s *Store) EnqueueAuthzTuple(ctx context.Context, tx ports.Tx, op ports.AuthzTupleOp) error {
+	pg := mustPgTx(tx)
+	if op.ID == "" {
+		op.ID = platform.NewEventID()
+	}
+	if op.Operation == "" {
+		op.Operation = "write"
+	}
+	if op.Status == "" {
+		op.Status = "pending"
+	}
+	now := time.Now().UTC()
+	if op.CreatedAt.IsZero() {
+		op.CreatedAt = now
+	}
+	op.UpdatedAt = now
+	if op.NextAttempt.IsZero() {
+		op.NextAttempt = now
+	}
+	_, err := pg.Exec(ctx, `
+INSERT INTO authz_tuple_outbox (id, organization_id, operation, object, relation, subject, edge_id, status, attempts, next_attempt, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9,$10,$11)
+ON CONFLICT DO NOTHING`,
+		op.ID, op.OrgID, op.Operation, op.Object, op.Relation, op.Subject, nullEmpty(op.EdgeID),
+		op.Status, op.NextAttempt, op.CreatedAt, op.UpdatedAt)
+	return err
+}
+
+func nullEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func (s *Store) ClaimAuthzTuples(ctx context.Context, limit int, lease time.Duration) ([]ports.AuthzTupleOp, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if lease <= 0 {
+		lease = 30 * time.Second
+	}
+	var out []ports.AuthzTupleOp
+	rows, err := s.pool.Query(ctx, `
+UPDATE authz_tuple_outbox SET lease_until=$1, updated_at=now()
+WHERE id IN (
+  SELECT id FROM authz_tuple_outbox
+  WHERE status='pending'
+    AND next_attempt <= now()
+    AND (lease_until IS NULL OR lease_until < now())
+  ORDER BY next_attempt ASC
+  LIMIT $2
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING id, organization_id, operation, object, relation, subject, COALESCE(edge_id,''), status, attempts,
+          COALESCE(last_error,''), lease_until, next_attempt, created_at, updated_at, applied_at`,
+		time.Now().UTC().Add(lease), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var op ports.AuthzTupleOp
+		if err := rows.Scan(&op.ID, &op.OrgID, &op.Operation, &op.Object, &op.Relation, &op.Subject, &op.EdgeID,
+			&op.Status, &op.Attempts, &op.LastError, &op.LeaseUntil, &op.NextAttempt, &op.CreatedAt, &op.UpdatedAt, &op.AppliedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, op)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkAuthzTupleApplied(ctx context.Context, id string, at time.Time) error {
+	ct, err := s.pool.Exec(ctx, `
+UPDATE authz_tuple_outbox SET status='applied', applied_at=$1, lease_until=NULL, last_error='', updated_at=$1
+WHERE id=$2`, at, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return platform.ErrNotFound("authz tuple not found")
+	}
+	return nil
+}
+
+func (s *Store) MarkAuthzTupleFailed(ctx context.Context, id string, attempts int, next time.Time, errMsg string, dead bool) error {
+	status := "pending"
+	if dead {
+		status = "dead"
+	}
+	ct, err := s.pool.Exec(ctx, `
+UPDATE authz_tuple_outbox SET status=$1, attempts=$2, next_attempt=$3, last_error=$4, lease_until=NULL, updated_at=now()
+WHERE id=$5`, status, attempts, next, errMsg, id)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return platform.ErrNotFound("authz tuple not found")
+	}
+	return nil
+}
+
+func (s *Store) CountAuthzTuplePending(ctx context.Context, orgID string) (int, int, error) {
+	var pending, dead int
+	q := `SELECT
+  COUNT(*) FILTER (WHERE status='pending'),
+  COUNT(*) FILTER (WHERE status='dead')
+FROM authz_tuple_outbox`
+	args := []any{}
+	if orgID != "" {
+		q += ` WHERE organization_id=$1`
+		args = append(args, orgID)
+	}
+	err := s.pool.QueryRow(ctx, q, args...).Scan(&pending, &dead)
+	return pending, dead, err
+}
+
+func (s *Store) ListActiveParentEdgesNeedingAuthz(ctx context.Context, orgID string, limit int) ([]ports.GraphEdge, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if orgID != "" {
+		var out []ports.GraphEdge
+		err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+			rows, err := tx.Query(ctx, `
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, COALESCE(sync_authz,false), attributes, created_at, updated_at
+FROM graph_edges
+WHERE organization_id=$1 AND lifecycle_state='ACTIVE' AND predicate='parent' AND sync_authz=true
+ORDER BY created_at ASC LIMIT $2`, orgID, limit)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var e ports.GraphEdge
+				var attrs []byte
+				if err := rows.Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &e.SyncAuthz, &attrs, &e.CreatedAt, &e.UpdatedAt); err != nil {
+					return err
+				}
+				_ = json.Unmarshal(attrs, &e.Attributes)
+				out = append(out, e)
+			}
+			return rows.Err()
+		})
+		return out, err
+	}
+	// Cross-org reconcile path (worker): bypass tenant filter via SET LOCAL role if available.
+	rows, err := s.pool.Query(ctx, `
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, COALESCE(sync_authz,false), attributes, created_at, updated_at
+FROM graph_edges
+WHERE lifecycle_state='ACTIVE' AND predicate='parent' AND sync_authz=true
+ORDER BY created_at ASC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ports.GraphEdge
+	for rows.Next() {
+		var e ports.GraphEdge
+		var attrs []byte
+		if err := rows.Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &e.SyncAuthz, &attrs, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(attrs, &e.Attributes)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) HasAuthzTupleCoverage(ctx context.Context, orgID, operation, object, relation, subject string) (bool, error) {
+	if operation == "" {
+		operation = "write"
+	}
+	var n int
+	q := `SELECT COUNT(*) FROM authz_tuple_outbox
+WHERE organization_id=$1 AND operation=$2 AND object=$3 AND relation=$4 AND subject=$5
+  AND status IN ('pending','applied')`
+	err := s.pool.QueryRow(ctx, q, orgID, operation, object, relation, subject).Scan(&n)
+	return n > 0, err
 }
 
 // PutMappingSpec stores a MappingSpec in mapping_specs when available, else sources.attributes.
@@ -957,13 +1235,6 @@ SELECT EXISTS(
   WHERE table_schema='public' AND table_name=$1
 )`, name).Scan(&ok)
 	return ok, err
-}
-
-func nullEmpty(s string) any {
-	if s == "" {
-		return nil
-	}
-	return s
 }
 
 func mustPgTx(tx ports.Tx) pgx.Tx {

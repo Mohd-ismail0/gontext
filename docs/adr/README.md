@@ -15,5 +15,6 @@
 | [0011](0011-connector-trust-tiers.md) | Connector trust tiers |
 | [0012](0012-v1-boundaries.md) | V1 product boundaries |
 | [0013](0013-knowledge-graph-first.md) | Knowledge-graph-first context plane |
+| [0014](0014-durable-authz-tuple-sync.md) | Durable AuthZ tuple synchronization |
 
 These ADRs supersede conflicting sections of `context-fabric-stress-test.md` where they disagree (service topology, consistency vocabulary, OPA in first slice, Chatwoot-special intake).

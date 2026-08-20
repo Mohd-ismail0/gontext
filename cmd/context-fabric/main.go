@@ -171,7 +171,7 @@ func runServe(role string) error {
 	}()
 
 	if role == "all" {
-		w := &app.Worker{Ledger: svc.Ledger, Bus: bus, Index: svc.Index, ChangeFeed: svc.ChangeFeed}
+		w := &app.Worker{Ledger: svc.Ledger, Bus: bus, Index: svc.Index, ChangeFeed: svc.ChangeFeed, Authz: asRelWriter(svc.Authz)}
 		go app.RunWorker(ctx, w)
 	}
 
@@ -419,7 +419,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 					migOK = false
 					migDetail = err.Error()
 				} else {
-					migDetail = "all migrations applied"
+					migDetail = "all migrations applied (004+ authz outbox)"
 				}
 			}
 			checks["migrations"] = map[string]any{"ok": migOK, "detail": migDetail}
@@ -431,7 +431,26 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			}
 			checks["authz_model_pinned"] = map[string]any{"ok": authzOK, "detail": authzDetail}
 
-			ready := migOK && authzOK
+			relWriter := asRelWriter(authz)
+			tupleWriterOK := relWriter != nil
+			tupleWriterDetail := "RelationshipWriter available"
+			if !tupleWriterOK {
+				tupleWriterDetail = "AuthorizationProvider does not implement RelationshipWriter"
+			}
+			checks["authz_tuple_writer"] = map[string]any{"ok": tupleWriterOK, "detail": tupleWriterDetail}
+
+			pending, dead, outboxErr := ledger.CountAuthzTuplePending(context.Background(), "")
+			outboxOK := outboxErr == nil && dead == 0
+			outboxDetail := fmt.Sprintf("pending=%d dead=%d", pending, dead)
+			if outboxErr != nil {
+				outboxOK = false
+				outboxDetail = outboxErr.Error()
+			} else if dead > 0 {
+				outboxDetail = fmt.Sprintf("dead-letter AuthZ tuples present (%d); pending=%d", dead, pending)
+			}
+			checks["authz_outbox"] = map[string]any{"ok": outboxOK, "detail": outboxDetail, "pending": pending, "dead": dead}
+
+			ready := migOK && authzOK && tupleWriterOK && outboxOK
 			return ready, checks
 		},
 		Changes:     changesL,
@@ -464,7 +483,7 @@ func runUntilSignal(role string) {
 			os.Exit(1)
 		}
 		defer cleanup()
-		w := &app.Worker{Ledger: svc.Ledger, Bus: bus, Index: svc.Index, ChangeFeed: svc.ChangeFeed}
+		w := &app.Worker{Ledger: svc.Ledger, Bus: bus, Index: svc.Index, ChangeFeed: svc.ChangeFeed, Authz: asRelWriter(svc.Authz)}
 		app.RunWorker(ctx, w)
 		fmt.Printf("context-fabric %s: shutdown\n", role)
 		return
@@ -773,4 +792,11 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return def
+}
+
+func asRelWriter(authz ports.AuthorizationProvider) ports.RelationshipWriter {
+	if w, ok := authz.(ports.RelationshipWriter); ok {
+		return w
+	}
+	return nil
 }

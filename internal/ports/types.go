@@ -180,6 +180,8 @@ type ContextPacket struct {
 	AuthzRevision      string      `json:"authz_revision"`
 	AuditID            string      `json:"audit_id"`
 	ActionRestrictions []string    `json:"action_restrictions"`
+	Truncated          bool        `json:"truncated,omitempty"`
+	NextCursor         string      `json:"next_cursor,omitempty"`
 	GeneratedAt        time.Time   `json:"responded_at,omitempty"`
 }
 
@@ -205,6 +207,7 @@ type GraphEdge struct {
 	Predicate  string            `json:"predicate"`
 	Confidence float64           `json:"confidence,omitempty"`
 	State      string            `json:"state,omitempty"` // ACTIVE | TOMBSTONED
+	SyncAuthz  bool              `json:"sync_authz,omitempty"`
 	Attributes map[string]string `json:"attributes,omitempty"`
 	CreatedAt  time.Time         `json:"created_at,omitempty"`
 	UpdatedAt  time.Time         `json:"updated_at,omitempty"`

@@ -31,7 +31,9 @@ v1 surfaces: `serve` (REST/MCP), `worker`, `connector`, bootstrap/doctor, Postgr
 | RLS | — | FORCE RLS, NOBYPASSRLS | — | SET LOCAL per txn | pool exhaustion quotas | fail if org GUC unset |
 | Intake | source HMAC/signature | MappingSpec cannot broaden ACL | event_id uniqueness | no bodies on NATS | size/rate quotas | trust ceiling on source |
 | Connectors | digest pin, no DB creds | SBOM/sign | connector audit | egress allowlist | CPU/mem limits | capability manifest |
-| Retrieval | — | Batch Check before hydrate | citations+audit_id | ID-only index; redaction | candidate bounds | tags cannot widen |
+| Retrieval | — | Batch Check before hydrate; visible-subgraph filter | citations+audit_id | ID-only index; redaction; no placeholder leak | candidate bounds | tags cannot widen |
+| Knowledge graph | — | edge+AuthZ outbox same txn | edge change events | dangling edges filtered | depth/node budgets | visibility_ref ≠ ACL |
+| AuthZ sync | service auth to OpenFGA | pinned model; outbox+reconcile | audit on apply failures | no tuples on public API | outbox lag readiness | no post-commit request-path writes |
 | MCP | PRM + audience | no token passthrough | parity audit | read-only tools | scope minimal | confused-deputy blocked |
 | Change feed | webhook HMAC | opaque IDs only | delivery receipts | no content in events | retry/DLQ | hydrate via gateway |
 | Deletion | authorize+legal hold | tombstone dominates | signed completion | — | — | restore replays tombstones |

@@ -238,6 +238,9 @@ func Apply(spec Spec, payload map[string]any, ceilings SourceCeilings, opts Opti
 	out.Trust = firstNonEmpty(trustRaw, "untrusted_external")
 	out.Authority = firstNonEmpty(authRaw, "corroborating")
 
+	if err := enforceConstraints(spec.Constraints); err != nil {
+		return Canonical{}, err
+	}
 	if err := enforceCeilings(out, ceilings); err != nil {
 		return Canonical{}, err
 	}
@@ -349,14 +352,27 @@ func resolveEdges(spec Spec, payload map[string]any, out Canonical) ([]Canonical
 		if em.EnsureEndpoints != nil {
 			ensure = *em.EnsureEndpoints
 		}
-		syncParent := strings.EqualFold(pred, ports.EdgeParent)
+		syncParent := false
+		if strings.EqualFold(pred, ports.EdgeParent) {
+			syncParent = true
+		}
 		if em.SyncAuthzParent != nil {
 			syncParent = *em.SyncAuthzParent
+		}
+		if syncParent && !strings.EqualFold(pred, ports.EdgeParent) {
+			return nil, platform.ErrValidation(fmt.Sprintf("edges[%d]: sync_authz_parent only allowed for parent", i))
+		}
+		predLower := strings.ToLower(pred)
+		if !allowedPredicate(predLower) {
+			return nil, platform.ErrValidation(fmt.Sprintf("edges[%d]: unsupported predicate %q", i, pred))
+		}
+		if conf < 0 || conf > 1 {
+			return nil, platform.ErrValidation(fmt.Sprintf("edges[%d]: confidence must be 0..1", i))
 		}
 		add(CanonicalEdge{
 			FromID:          fromID,
 			ToID:            toID,
-			Predicate:       strings.ToLower(pred),
+			Predicate:       predLower,
 			Confidence:      conf,
 			EnsureEndpoints: ensure,
 			SyncAuthzParent: syncParent,
@@ -423,7 +439,7 @@ func edgeFromVisibilityRef(resourceID, visibilityRef string) (CanonicalEdge, boo
 		Predicate:       ports.EdgeParent,
 		Confidence:      1,
 		EnsureEndpoints: true,
-		SyncAuthzParent: true,
+		SyncAuthzParent: false, // visibility_ref is metadata, not ACL inheritance (ADR 0013)
 		ToKind:          kind,
 		ToTitle:         title,
 		ToExternalID:    external,
@@ -433,6 +449,15 @@ func edgeFromVisibilityRef(resourceID, visibilityRef string) (CanonicalEdge, boo
 func uuidV5Hex(name string) string {
 	// Same namespace as MappingSpec transform "uuid_v5".
 	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(name)).String()
+}
+
+func allowedPredicate(p string) bool {
+	switch p {
+	case ports.EdgeParent, ports.EdgeRelatedTo, ports.EdgeMentions, ports.EdgeDerivedFrom, ports.EdgeAssignedTo:
+		return true
+	default:
+		return false
+	}
 }
 
 // ToRecord builds a ports.Record from mapped canonical fields.
@@ -452,6 +477,26 @@ func (c Canonical) ToRecord(orgID, sourceSystem string) ports.Record {
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+}
+
+func enforceConstraints(c Constraints) error {
+	// Omitted constraints default to the fixed safety rails (all true).
+	if c == (Constraints{}) {
+		return nil
+	}
+	if !c.CannotMintOrganization {
+		return platform.ErrForbidden("mapping constraints.cannot_mint_organization must be true")
+	}
+	if !c.CannotBroadenACL {
+		return platform.ErrForbidden("mapping constraints.cannot_broaden_acl must be true")
+	}
+	if !c.AuthorityCeilingFromSource {
+		return platform.ErrForbidden("mapping constraints.authority_ceiling_from_source must be true")
+	}
+	if !c.ClientFieldsMayOnlyNarrow {
+		return platform.ErrForbidden("mapping constraints.client_fields_may_only_narrow must be true")
+	}
+	return nil
 }
 
 func enforceCeilings(out Canonical, ceilings SourceCeilings) error {

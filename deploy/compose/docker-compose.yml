@@ -161,7 +161,8 @@ services:
       - private
     restart: "no"
 
-  # Single process (serve+worker) until a durable shared INDEX_BACKEND exists.
+  # Default role=all with durable INDEX_BACKEND=postgres so AuthZ outbox + index projection share Postgres.
+  # Split serve/worker is supported when INDEX_BACKEND=postgres (uncomment worker below).
   # Default PROFILE=demo for local compose (Local auth + memory OpenFGA).
   # For starter/OIDC: set CONTEXT_FABRIC_PROFILE=starter, run bootstrap, pin OPENFGA_STORE_ID.
   serve:
@@ -177,6 +178,7 @@ services:
       CONTEXT_FABRIC_ROLE: all
       CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-demo}
       CONTEXT_FABRIC_LISTEN_ADDR: ":8080"
+      INDEX_BACKEND: ${INDEX_BACKEND:-postgres}
       POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
       S3_ENDPOINT: http://minio:9000
       NATS_URL: nats://nats:4222
@@ -239,7 +241,7 @@ services:
       - private
     restart: "no"
 
-  # Optional future worker when INDEX_BACKEND is durable (e.g. postgres).
+  # Optional split worker when INDEX_BACKEND=postgres (AuthZ outbox + index projection).
   # Do not enable alongside in-memory index — projections would not be shared with serve.
   # worker:
   #   image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
@@ -249,9 +251,21 @@ services:
   #   command: ["worker"]
   #   environment:
   #     CONTEXT_FABRIC_ROLE: worker
+  #     INDEX_BACKEND: postgres
   #     POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+  #     OPENFGA_API_URL: http://openfga:8080
+  #     OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
+  #   volumes:
+  #     - openfga_bootstrap:/var/run/context-fabric
   #   networks:
   #     - private
+  #   depends_on:
+  #     migrate:
+  #       condition: service_completed_successfully
+  #     bootstrap:
+  #       condition: service_completed_successfully
+  #     openfga:
+  #       condition: service_healthy
 
 networks:
   private:

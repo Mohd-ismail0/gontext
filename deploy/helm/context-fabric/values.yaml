@@ -21,6 +21,8 @@ config:
   listenAddr: ":8080"
   logLevel: info
   openfgaModelId: scaled-model-v1
+  # Durable search/index projection shared by serve and worker.
+  indexBackend: postgres
   capabilities:
     pgvector: true
     jetstream_persistence: true
@@ -30,8 +32,8 @@ config:
 
 serve:
   enabled: true
-  # Use role "all" until INDEX_BACKEND is durable; separate worker cannot share memory index.
-  # Keep replicaCount at 1 while the search index is in-process memory.
+  # With INDEX_BACKEND=postgres, role may be "serve" and worker.enabled=true.
+  # Default keeps a single "all" process for simpler demos.
   role: all
   replicaCount: 1
   resources:
@@ -62,8 +64,7 @@ serve:
       failureThreshold: 3
 
 worker:
-  # Disabled by default: in-memory index is not shared across pods.
-  # Re-enable when INDEX_BACKEND=postgres (or equivalent) exists.
+  # Enable with INDEX_BACKEND=postgres for split AuthZ-outbox / index projection workers.
   enabled: false
   replicaCount: 2
   resources:

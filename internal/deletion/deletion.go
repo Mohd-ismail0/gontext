@@ -127,7 +127,42 @@ func (s *Service) Run(ctx context.Context, req Request) (CompletionManifest, err
 		if err := s.Ledger.AppendRevision(ctx, tx, tomb); err != nil {
 			return err
 		}
-		return s.Ledger.UpsertRecord(ctx, tx, rec)
+		if err := s.Ledger.UpsertRecord(ctx, tx, rec); err != nil {
+			return err
+		}
+		// Tombstone incident edges and enqueue AuthZ parent tuple deletions.
+		edges, err := s.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
+			ResourceIDs: []string{req.ResourceID},
+			IncludeDead: false,
+			Limit:       1000,
+		})
+		if err != nil {
+			return err
+		}
+		nowEdge := s.now()
+		for _, e := range edges {
+			if err := s.Ledger.TombstoneEdge(ctx, tx, req.OrgID, e.EdgeID); err != nil {
+				return err
+			}
+			if e.SyncAuthz && e.Predicate == ports.EdgeParent {
+				if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
+					ID:          platform.NewEventID(),
+					OrgID:       req.OrgID,
+					Operation:   "delete",
+					Object:      "resource:" + e.FromID,
+					Relation:    "parent",
+					Subject:     "resource:" + e.ToID,
+					EdgeID:      e.EdgeID,
+					Status:      "pending",
+					CreatedAt:   nowEdge,
+					UpdatedAt:   nowEdge,
+					NextAttempt: nowEdge,
+				}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return CompletionManifest{}, err
@@ -241,6 +276,15 @@ func (s *Service) enumerate(ctx context.Context, orgID, resourceID string, rec p
 	}
 	out = append(out, DerivativeRef{Kind: "index", Ref: resourceID})
 	out = append(out, DerivativeRef{Kind: "cache", Ref: resourceID})
+	if edges, err := s.Ledger.ListEdges(ctx, orgID, ports.EdgeListOptions{
+		ResourceIDs: []string{resourceID},
+		IncludeDead: true,
+		Limit:       200,
+	}); err == nil {
+		for _, e := range edges {
+			out = append(out, DerivativeRef{Kind: "graph_edge", Ref: e.EdgeID})
+		}
+	}
 	return out
 }
 

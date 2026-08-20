@@ -31,6 +31,7 @@ type Store struct {
 	holds        map[string]map[string]bool // org -> resourceID -> legal hold
 	mappings     map[string]mapping.Spec    // sourceID -> Spec
 	edges        map[string]map[string]ports.GraphEdge // org -> edgeID -> edge
+	authzTuples  map[string]map[string]ports.AuthzTupleOp // org -> id -> op
 }
 
 // WebhookSubscription is a test/demo webhook registration.
@@ -84,6 +85,7 @@ func NewStore() *Store {
 		holds:       make(map[string]map[string]bool),
 		mappings:    make(map[string]mapping.Spec),
 		edges:       make(map[string]map[string]ports.GraphEdge),
+		authzTuples: make(map[string]map[string]ports.AuthzTupleOp),
 	}
 }
 
@@ -545,16 +547,18 @@ func (s *Store) UpsertEdge(_ context.Context, _ ports.Tx, edge ports.GraphEdge) 
 		m = make(map[string]ports.GraphEdge)
 		s.edges[edge.OrgID] = m
 	}
-	// Replace active triple if present.
+	// Idempotent: if identical active triple exists, refresh metadata in place.
 	for id, existing := range m {
 		if existing.State == "ACTIVE" &&
 			existing.FromID == edge.FromID &&
 			existing.ToID == edge.ToID &&
-			existing.Predicate == edge.Predicate &&
-			id != edge.EdgeID {
-			existing.State = "TOMBSTONED"
+			existing.Predicate == edge.Predicate {
+			existing.Confidence = edge.Confidence
+			existing.SyncAuthz = edge.SyncAuthz
+			existing.Attributes = edge.Attributes
 			existing.UpdatedAt = now
 			m[id] = existing
+			return nil
 		}
 	}
 	m[edge.EdgeID] = edge
@@ -623,6 +627,255 @@ func (s *Store) TombstoneEdge(_ context.Context, _ ports.Tx, orgID, edgeID strin
 	e.UpdatedAt = time.Now().UTC()
 	m[edgeID] = e
 	return nil
+}
+
+func (s *Store) GetRecordTx(_ context.Context, _ ports.Tx, orgID, resourceID string) (ports.Record, error) {
+	return s.GetRecord(context.Background(), orgID, resourceID)
+}
+
+func (s *Store) InsertPlaceholder(_ context.Context, _ ports.Tx, rec ports.Record) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec.OrgID == "" || rec.ResourceID == "" {
+		return false, platform.ErrValidation("org and resource required")
+	}
+	m := s.records[rec.OrgID]
+	if m == nil {
+		m = make(map[string]ports.Record)
+		s.records[rec.OrgID] = m
+	}
+	if _, exists := m[rec.ResourceID]; exists {
+		return false, nil
+	}
+	now := time.Now().UTC()
+	rec.State = ports.LifecyclePlaceholder
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	rec.UpdatedAt = now
+	if rec.Attributes == nil {
+		rec.Attributes = map[string]string{}
+	}
+	rec.Attributes["placeholder"] = "true"
+	m[rec.ResourceID] = rec
+	return true, nil
+}
+
+func (s *Store) PromotePlaceholder(_ context.Context, _ ports.Tx, rec ports.Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.records[rec.OrgID]
+	if m == nil {
+		m = make(map[string]ports.Record)
+		s.records[rec.OrgID] = m
+	}
+	existing, ok := m[rec.ResourceID]
+	now := time.Now().UTC()
+	if ok && existing.State != ports.LifecyclePlaceholder && existing.State != ports.LifecycleEnsured {
+		// Never clobber an authoritative accepted record via promote.
+		rec.CreatedAt = existing.CreatedAt
+	} else if ok {
+		rec.CreatedAt = existing.CreatedAt
+	} else if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	if rec.State == "" || rec.State == ports.LifecyclePlaceholder || rec.State == ports.LifecycleEnsured {
+		rec.State = ports.LifecycleAccepted
+	}
+	rec.UpdatedAt = now
+	if rec.Attributes == nil {
+		rec.Attributes = map[string]string{}
+	}
+	delete(rec.Attributes, "placeholder")
+	delete(rec.Attributes, "ensured")
+	m[rec.ResourceID] = rec
+	return nil
+}
+
+func (s *Store) EnqueueAuthzTuple(_ context.Context, _ ports.Tx, op ports.AuthzTupleOp) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if op.OrgID == "" || op.Object == "" || op.Relation == "" || op.Subject == "" {
+		return platform.ErrValidation("authz tuple fields required")
+	}
+	if op.ID == "" {
+		op.ID = platform.NewEventID()
+	}
+	if op.Operation == "" {
+		op.Operation = "write"
+	}
+	if op.Status == "" {
+		op.Status = "pending"
+	}
+	now := time.Now().UTC()
+	if op.CreatedAt.IsZero() {
+		op.CreatedAt = now
+	}
+	op.UpdatedAt = now
+	if op.NextAttempt.IsZero() {
+		op.NextAttempt = now
+	}
+	m := s.authzTuples[op.OrgID]
+	if m == nil {
+		m = make(map[string]ports.AuthzTupleOp)
+		s.authzTuples[op.OrgID] = m
+	}
+	for id, existing := range m {
+		if existing.Status == "pending" &&
+			existing.Operation == op.Operation &&
+			existing.Object == op.Object &&
+			existing.Relation == op.Relation &&
+			existing.Subject == op.Subject {
+			existing.EdgeID = op.EdgeID
+			existing.UpdatedAt = now
+			m[id] = existing
+			return nil
+		}
+	}
+	m[op.ID] = op
+	return nil
+}
+
+func (s *Store) ClaimAuthzTuples(_ context.Context, limit int, lease time.Duration) ([]ports.AuthzTupleOp, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 20
+	}
+	if lease <= 0 {
+		lease = 30 * time.Second
+	}
+	now := time.Now().UTC()
+	until := now.Add(lease)
+	out := make([]ports.AuthzTupleOp, 0, limit)
+	for orgID, m := range s.authzTuples {
+		for id, op := range m {
+			if op.Status != "pending" {
+				continue
+			}
+			if op.LeaseUntil != nil && op.LeaseUntil.After(now) {
+				continue
+			}
+			if op.NextAttempt.After(now) {
+				continue
+			}
+			op.LeaseUntil = &until
+			op.UpdatedAt = now
+			m[id] = op
+			s.authzTuples[orgID] = m
+			out = append(out, op)
+			if len(out) >= limit {
+				return out, nil
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) MarkAuthzTupleApplied(_ context.Context, id string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for orgID, m := range s.authzTuples {
+		if op, ok := m[id]; ok {
+			op.Status = "applied"
+			op.AppliedAt = &at
+			op.UpdatedAt = at
+			op.LeaseUntil = nil
+			op.LastError = ""
+			m[id] = op
+			s.authzTuples[orgID] = m
+			return nil
+		}
+	}
+	return platform.ErrNotFound("authz tuple not found")
+}
+
+func (s *Store) MarkAuthzTupleFailed(_ context.Context, id string, attempts int, next time.Time, errMsg string, dead bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for orgID, m := range s.authzTuples {
+		if op, ok := m[id]; ok {
+			op.Attempts = attempts
+			op.NextAttempt = next
+			op.LastError = errMsg
+			op.LeaseUntil = nil
+			op.UpdatedAt = time.Now().UTC()
+			if dead {
+				op.Status = "dead"
+			}
+			m[id] = op
+			s.authzTuples[orgID] = m
+			return nil
+		}
+	}
+	return platform.ErrNotFound("authz tuple not found")
+}
+
+func (s *Store) CountAuthzTuplePending(_ context.Context, orgID string) (int, int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	pending, dead := 0, 0
+	for oid, m := range s.authzTuples {
+		if orgID != "" && oid != orgID {
+			continue
+		}
+		for _, op := range m {
+			switch op.Status {
+			case "pending":
+				pending++
+			case "dead":
+				dead++
+			}
+		}
+	}
+	return pending, dead, nil
+}
+
+func (s *Store) ListActiveParentEdgesNeedingAuthz(_ context.Context, orgID string, limit int) ([]ports.GraphEdge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	out := make([]ports.GraphEdge, 0)
+	for oid, m := range s.edges {
+		if orgID != "" && oid != orgID {
+			continue
+		}
+		for _, e := range m {
+			if e.State == "ACTIVE" && e.Predicate == ports.EdgeParent && e.SyncAuthz {
+				out = append(out, e)
+				if len(out) >= limit {
+					return out, nil
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) HasAuthzTupleCoverage(_ context.Context, orgID, operation, object, relation, subject string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if operation == "" {
+		operation = "write"
+	}
+	for oid, m := range s.authzTuples {
+		if orgID != "" && oid != orgID {
+			continue
+		}
+		for _, op := range m {
+			if op.Operation != operation {
+				continue
+			}
+			if op.Object == object && op.Relation == relation && op.Subject == subject {
+				if op.Status == "pending" || op.Status == "applied" {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }
 
 // AppendAudit implements audit.LedgerWriter.

@@ -28,6 +28,7 @@ fi
 
 echo "==> OpenFGA export placeholder"
 echo "Export store/model/tuples via OpenFGA CLI or control API into $OUT_DIR/openfga/"
+echo "NOTE: pg_dump includes graph_edges + authz_tuple_outbox; restore OpenFGA tuples after ledger, then let worker reconcile sync_authz parents."
 mkdir -p "$OUT_DIR/openfga"
 cat >"$OUT_DIR/openfga/README.md" <<'EOF'
 Place OpenFGA model + tuple export here. Example (operator-run):

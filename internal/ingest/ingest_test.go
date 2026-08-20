@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/adapters/memory"
 	"github.com/xsama/context-fabric/internal/adapters/openfga"
 	"github.com/xsama/context-fabric/internal/ingest"
@@ -121,8 +122,6 @@ func TestDuplicateIntakeIdempotent(t *testing.T) {
 
 func TestIntakeEmitsParentEdgeFromVisibilityRef(t *testing.T) {
 	svc, ledger, src := setup(t)
-	authz := openfga.NewMemory()
-	svc.Authz = authz
 	payload := map[string]any{
 		"data": map[string]any{
 			"source_external_id": "ext-edge-1",
@@ -153,32 +152,68 @@ func TestIntakeEmitsParentEdgeFromVisibilityRef(t *testing.T) {
 	if len(edges) != 1 || edges[0].Predicate != ports.EdgeParent || edges[0].FromID != "res-msg-1" {
 		t.Fatalf("unexpected edges: %#v", edges)
 	}
-	parentID := edges[0].ToID
-	if _, err := ledger.GetRecord(context.Background(), "org1", parentID); err != nil {
-		t.Fatalf("expected ensured parent stub: %v", err)
+	if edges[0].SyncAuthz {
+		t.Fatal("visibility_ref parent must not request AuthZ inheritance")
 	}
-	// OpenFGA parent tuple synced for inheritance.
-	dec, err := authz.Check(context.Background(), ports.AuthzCheck{
-		Principal:  ports.Principal{Kind: ports.PrincipalKindUser, Subject: "alice", OrgID: "org1"},
-		Action:     "can_read",
-		ResourceID: "res-msg-1",
-	})
+	parentID := edges[0].ToID
+	parent, err := ledger.GetRecord(context.Background(), "org1", parentID)
+	if err != nil {
+		t.Fatalf("expected placeholder parent: %v", err)
+	}
+	if parent.State != ports.LifecyclePlaceholder && parent.State != ports.LifecycleEnsured {
+		t.Fatalf("expected PLACEHOLDER state, got %s", parent.State)
+	}
+	pending, _, err := ledger.CountAuthzTuplePending(context.Background(), "org1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Without grants on parent, child alone has no can_read — tuple exists but no reader yet.
-	_ = dec
-	authz.Grant("resource:"+parentID, "can_read", "user:alice")
-	dec, err = authz.Check(context.Background(), ports.AuthzCheck{
+	if pending != 0 {
+		t.Fatalf("visibility_ref must not enqueue AuthZ tuples, got pending=%d", pending)
+	}
+}
+
+func TestIntakeParentResourceIDEnqueuesAuthzOutbox(t *testing.T) {
+	svc, ledger, src := setup(t)
+	authz := openfga.NewMemory()
+	req := signedReq(t, src.SigningSecret, map[string]any{
+		"data": map[string]any{
+			"source_external_id": "ext-edge-authz",
+			"source_revision":    "r1",
+			"resource_id":        "res-child-authz",
+			"resource_type":      "message",
+			"classification":     "internal",
+			"trust":              "trusted_internal",
+			"source_authority":   "corroborating",
+			"title":              "Hello",
+			"parent_resource_id": "res-parent-authz",
+		},
+	}, "idem-edge-authz")
+	req.Mapping.Mappings.ParentResourceID = &mapping.Expr{Expr: "$.data.parent_resource_id"}
+	if _, err := svc.Intake(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	pending, _, err := ledger.CountAuthzTuplePending(context.Background(), "org1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("expected 1 pending AuthZ tuple, got %d", pending)
+	}
+	w := &app.Worker{Ledger: ledger, Authz: authz, Batch: 10, MaxAuthzAttempts: 5}
+	if err := w.DrainAuthz(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	authz.Grant("resource:res-parent-authz", "reader", "user:alice")
+	dec, err := authz.Check(context.Background(), ports.AuthzCheck{
 		Principal:  ports.Principal{Kind: ports.PrincipalKindUser, Subject: "alice", OrgID: "org1"},
 		Action:     "can_read",
-		ResourceID: "res-msg-1",
+		ResourceID: "res-child-authz",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !dec.Allowed {
-		t.Fatal("child should inherit can_read via synced parent tuple")
+		t.Fatal("child should inherit can_read after outbox AuthZ sync")
 	}
 }
 

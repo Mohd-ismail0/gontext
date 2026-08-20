@@ -14,14 +14,16 @@ import (
 
 const indexConsumer = "context-index-projector"
 
-// Worker runs outbox relay and index projection consumers.
+// Worker runs outbox relay, AuthZ tuple sync, and index projection consumers.
 type Worker struct {
 	Ledger     ports.LedgerStore
 	Bus        ports.EventBus
 	Index      ports.IndexProvider
+	Authz      ports.RelationshipWriter
 	ChangeFeed *changes.Service
 	Interval   time.Duration
 	Batch      int
+	MaxAuthzAttempts int
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -35,11 +37,14 @@ func (w *Worker) Start(ctx context.Context) {
 	if w.Batch <= 0 {
 		w.Batch = 10
 	}
+	if w.MaxAuthzAttempts <= 0 {
+		w.MaxAuthzAttempts = 12
+	}
 	if w.Bus == nil {
 		w.Bus = noopBus{}
 	}
 	w.stop = make(chan struct{})
-	w.wg.Add(3)
+	w.wg.Add(5)
 	go func() {
 		defer w.wg.Done()
 		w.relayLoop(ctx)
@@ -51,6 +56,14 @@ func (w *Worker) Start(ctx context.Context) {
 	go func() {
 		defer w.wg.Done()
 		w.webhookLoop(ctx)
+	}()
+	go func() {
+		defer w.wg.Done()
+		w.authzLoop(ctx)
+	}()
+	go func() {
+		defer w.wg.Done()
+		w.reconcileLoop(ctx)
 	}()
 }
 
@@ -154,6 +167,147 @@ func (w *Worker) webhookLoop(ctx context.Context) {
 	}
 }
 
+func (w *Worker) authzLoop(ctx context.Context) {
+	ticker := time.NewTicker(w.Interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.stop:
+			return
+		case <-ticker.C:
+			if err := w.authzOnce(ctx); err != nil {
+				log.Printf("worker authz: %v", err)
+			}
+		}
+	}
+}
+
+func (w *Worker) authzOnce(ctx context.Context) error {
+	if w.Authz == nil || w.Ledger == nil {
+		return nil
+	}
+	ops, err := w.Ledger.ClaimAuthzTuples(ctx, w.Batch, 30*time.Second)
+	if err != nil || len(ops) == 0 {
+		return err
+	}
+	for _, op := range ops {
+		tuple := ports.RelationshipTuple{Object: op.Object, Relation: op.Relation, Subject: op.Subject}
+		var applyErr error
+		switch op.Operation {
+		case "delete":
+			applyErr = w.Authz.DeleteTuples(ctx, []ports.RelationshipTuple{tuple})
+		default:
+			applyErr = w.Authz.WriteTuples(ctx, []ports.RelationshipTuple{tuple})
+		}
+		if applyErr != nil {
+			attempts := op.Attempts + 1
+			dead := attempts >= w.MaxAuthzAttempts
+			backoff := time.Duration(1<<min(attempts, 6)) * time.Second
+			next := time.Now().UTC().Add(backoff)
+			_ = w.Ledger.MarkAuthzTupleFailed(ctx, op.ID, attempts, next, applyErr.Error(), dead)
+			continue
+		}
+		_ = w.Ledger.MarkAuthzTupleApplied(ctx, op.ID, time.Now().UTC())
+	}
+	return nil
+}
+
+// DrainAuthz processes pending AuthZ outbox entries until empty or an error (tests / ops).
+func (w *Worker) DrainAuthz(ctx context.Context) error {
+	for {
+		pending, _, err := w.Ledger.CountAuthzTuplePending(ctx, "")
+		if err != nil {
+			return err
+		}
+		if pending == 0 {
+			return nil
+		}
+		if err := w.authzOnce(ctx); err != nil {
+			return err
+		}
+		// Avoid tight loop if claims fail to clear (lease/backoff).
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+// ReconcileAuthz re-enqueues missing AuthZ writes for active sync_authz parent edges.
+func (w *Worker) ReconcileAuthz(ctx context.Context) error {
+	return w.reconcileOnce(ctx)
+}
+
+func (w *Worker) reconcileLoop(ctx context.Context) {
+	interval := w.Interval
+	if interval < 10*time.Second {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.stop:
+			return
+		case <-ticker.C:
+			if err := w.reconcileOnce(ctx); err != nil {
+				log.Printf("worker authz reconcile: %v", err)
+			}
+		}
+	}
+}
+
+// reconcileOnce re-enqueues missing AuthZ writes for active parent edges with sync_authz.
+func (w *Worker) reconcileOnce(ctx context.Context) error {
+	if w.Ledger == nil {
+		return nil
+	}
+	edges, err := w.Ledger.ListActiveParentEdgesNeedingAuthz(ctx, "", 200)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, e := range edges {
+		object := "resource:" + e.FromID
+		subject := "resource:" + e.ToID
+		ok, err := w.Ledger.HasAuthzTupleCoverage(ctx, e.OrgID, "write", object, "parent", subject)
+		if err != nil {
+			return err
+		}
+		if ok {
+			continue
+		}
+		_ = w.Ledger.WithOrgTx(ctx, e.OrgID, func(ctx context.Context, tx ports.Tx) error {
+			return w.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
+				ID:          platform.NewEventID(),
+				OrgID:       e.OrgID,
+				Operation:   "write",
+				Object:      object,
+				Relation:    "parent",
+				Subject:     subject,
+				EdgeID:      e.EdgeID,
+				Status:      "pending",
+				CreatedAt:   now,
+				UpdatedAt:   now,
+				NextAttempt: now,
+			})
+		})
+	}
+	return nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 type jetStreamFetcher interface {
 	FetchIndex(ctx context.Context, max int, wait time.Duration) ([]ports.EventMessage, error)
 }
@@ -181,6 +335,13 @@ func (w *Worker) projectPayload(ctx context.Context, data []byte) error {
 		rec, err := w.Ledger.GetRecord(ctx, p.OrgID, p.ResourceID)
 		if err != nil {
 			return err
+		}
+		// Placeholders are non-indexable / non-searchable (ADR 0013).
+		if rec.State == ports.LifecyclePlaceholder || rec.State == ports.LifecycleEnsured {
+			return w.Ledger.PutInbox(ctx, ports.InboxEntry{
+				ID: platform.NewEventID(), OrgID: p.OrgID, Consumer: indexConsumer,
+				MsgID: p.EventID, ProcessedAt: time.Now().UTC(),
+			})
 		}
 		if err := w.Index.Upsert(ctx, []ports.IndexDocument{{
 			ResourceID: p.ResourceID,

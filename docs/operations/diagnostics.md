@@ -32,7 +32,9 @@ Bundles include version/health metadata only — no tokens, queries, or evidence
 
 | Symptom | Likely cause | Next step |
 |---------|--------------|-----------|
-| ready=false | migrations / authz model | check migrate logs, model pin |
-| empty search for known resource | tombstone, purpose, or AuthZ deny | diagnose decision; inspect state |
+| ready=false | migrations / authz model / tuple writer / AuthZ outbox dead letters | check migrate logs, model pin, `/health/ready` checks map |
+| authz_outbox pending grows | OpenFGA outage or writer misconfig | inspect worker logs; DrainAuthz / reconcile; fix OpenFGA |
+| empty search for known resource | tombstone, purpose, placeholder, or AuthZ deny | diagnose decision; inspect lifecycle state |
+| graph missing edges | one endpoint denied/placeholder/policy | both ends must survive AuthZ+policy; placeholders never returned |
 | webhook duplicates | receiver not idempotent on `event_id` | replay + catch-up via cursor feed |
 | export hash fail | tampered or partial manifest | re-export; never skip verification |

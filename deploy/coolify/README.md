@@ -36,6 +36,10 @@ Profile source of truth: [`../profiles/xsama.yaml`](../profiles/xsama.yaml) (ADR
 9. **Clock skew** — NTP on all LXCs; doctor fails closed on excessive skew.
 10. **OIDC** — Point generic OIDC settings at Logto (or any compliant IdP). No Logto-specific imports in core.
 
+## Durable index and AuthZ outbox
+
+Set `INDEX_BACKEND=postgres` for Coolify `serve`/`worker` splits so search projections and `authz_tuple_outbox` share Postgres. Ready probes require a pinned OpenFGA model, a `RelationshipWriter`, migrations through `004_authz_tuple_outbox`, and no dead-letter AuthZ tuples.
+
 ## Suggested Coolify process commands
 
 ```text

@@ -206,6 +206,59 @@ cases:
         - ../authorization-fixtures/tag-downgrade-deny.json
         - ../authorization-fixtures/cross-org-deny.json
 
+  - id: graph-visible-subgraph
+    name: Visible subgraph AuthZ and policy filtering
+    category: retrieval
+    description: >
+      POST .../context:graph returns only nodes and edges where both endpoints
+      survive organization isolation, OpenFGA can_read, policy, and lifecycle
+      checks. PLACEHOLDER nodes and dangling edges are omitted without leaking IDs.
+    steps:
+      - seed_graph:
+          nodes: [accepted_parent, accepted_child, placeholder_neighbor]
+          edges:
+            - {from: accepted_child, predicate: parent, to: accepted_parent, sync_authz: true}
+            - {from: accepted_child, predicate: mentions, to: placeholder_neighbor}
+      - grant_reader:
+          resource: accepted_parent
+          subject: user:alice
+      - drain_authz_outbox: {}
+      - graph:
+          resource_id: accepted_child
+          depth: 2
+          purpose: support
+      - assert_packet:
+          must_include_nodes: [accepted_child, accepted_parent]
+          must_exclude_nodes: [placeholder_neighbor]
+          no_dangling_edges: true
+          truncated_has_cursor: optional
+    expect:
+      pass: true
+
+  - id: authz-outbox-parent-sync
+    name: Durable AuthZ tuple outbox for parent edges
+    category: authz
+    description: >
+      Intake that writes a sync_authz parent edge enqueues an OpenFGA tuple in the
+      same ledger transaction. Duplicate intake returns the committed result while
+      pending AuthZ work continues; worker apply is idempotent.
+    steps:
+      - intake_with_parent_resource_id:
+          sync_authz_parent: true
+      - assert_outbox:
+          pending_gte: 1
+      - openfga_outage: true
+      - worker_authz_attempt:
+          expect_retry: true
+      - openfga_outage: false
+      - drain_authz_outbox: {}
+      - assert_inheritance:
+          child_can_read_via_parent: true
+      - duplicate_intake:
+          expect_idempotent: true
+    expect:
+      pass: true
+
 runners:
   - id: go-conformance
     entrypoint: cf conformance run --suite contracts/conformance/suite.yaml

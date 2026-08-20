@@ -22,6 +22,10 @@ func TestExportRoundTripHashStable(t *testing.T) {
 		_ = store.AppendRevision(ctx, tx, ports.Revision{
 			RevisionID: "rev1", ResourceID: "r1", OrgID: org, State: "INDEXED", ContentHash: "abc",
 		})
+		_ = store.UpsertEdge(ctx, tx, ports.GraphEdge{
+			EdgeID: "e1", OrgID: org, FromID: "r1", ToID: "r1-parent", Predicate: ports.EdgeParent,
+			State: "ACTIVE", SyncAuthz: true, Confidence: 1,
+		})
 		return store.UpsertSource(ctx, tx, ports.SourceRegistration{
 			SourceID: "src1", OrgID: org, System: "chatwoot", TrustTier: "verified", Enabled: true,
 			Attributes: map[string]string{"api_key": "SHOULD_NOT_EXPORT", "region": "us"},
@@ -55,6 +59,12 @@ func TestExportRoundTripHashStable(t *testing.T) {
 	if h1 != h2 {
 		t.Fatalf("export hash not stable: %s vs %s", h1, h2)
 	}
+	if len(m1.GraphEdges) != 1 || !m1.GraphEdges[0].SyncAuthz {
+		t.Fatalf("expected sync_authz edge in export: %#v", m1.GraphEdges)
+	}
+	if len(m1.AuthzTuples) != 1 || m1.AuthzTuples[0].Relation != "parent" {
+		t.Fatalf("expected authz tuple manifest: %#v", m1.AuthzTuples)
+	}
 
 	target := "org_isolated_2"
 	m1.OrganizationID = target
@@ -77,5 +87,19 @@ func TestExportRoundTripHashStable(t *testing.T) {
 	}
 	if got.Title != "alpha" {
 		t.Fatalf("import failed: %+v", got)
+	}
+	edges, err := store.ListEdges(ctx, target, ports.EdgeListOptions{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(edges) != 1 || edges[0].FromID != "r1" {
+		t.Fatalf("imported edges: %#v", edges)
+	}
+	pending, _, err := store.CountAuthzTuplePending(ctx, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("import should enqueue AuthZ tuple, pending=%d", pending)
 	}
 }

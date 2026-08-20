@@ -56,6 +56,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: {{ .Values.config.listenAddr | quote }}
 - name: CONTEXT_FABRIC_LOG_LEVEL
   value: {{ .Values.config.logLevel | quote }}
+- name: INDEX_BACKEND
+  value: {{ .Values.config.indexBackend | default "postgres" | quote }}
 - name: CAPABILITY_PGVECTOR
   value: {{ .Values.config.capabilities.pgvector | quote }}
 - name: CAPABILITY_JETSTREAM_PERSISTENCE

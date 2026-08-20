@@ -287,6 +287,40 @@ paths:
         "default":
           $ref: "#/components/responses/Error"
 
+  /v1/organizations/{orgId}/context:graph:
+    post:
+      tags: [Retrieval]
+      operationId: graphContext
+      summary: Traverse the AuthZ-and-policy-visible knowledge subgraph
+      description: |
+        OAuth scope ceiling `context:read`. Starts at a seed resource, expands
+        bounded neighborhood hops, then returns only nodes/edges that survive
+        organization isolation, OpenFGA can_read, and policy/lifecycle filters.
+        Placeholders and dangling edges are never returned.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GraphRequest"
+      responses:
+        "200":
+          description: Visible subgraph as a ContextPacket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPacket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
   /v1/organizations/{orgId}/context/access-requests:
     post:
       tags: [Access]
@@ -1516,6 +1550,37 @@ components:
         consistency:
           $ref: "#/components/schemas/ConsistencyMode"
 
+    GraphRequest:
+      type: object
+      additionalProperties: false
+      required: [resource_id, purpose]
+      properties:
+        resource_id:
+          type: string
+          minLength: 1
+          description: Seed node for bounded subgraph traversal.
+        purpose:
+          $ref: "#/components/schemas/Purpose"
+        depth:
+          type: integer
+          minimum: 0
+          maximum: 8
+          default: 2
+        max_nodes:
+          type: integer
+          minimum: 1
+          maximum: 500
+          default: 100
+        predicates:
+          type: array
+          items: { type: string }
+          description: Optional predicate allowlist (AND-narrow).
+        consistency:
+          $ref: "#/components/schemas/ConsistencyMode"
+        cursor:
+          type: string
+          description: Resume cursor from a prior truncated graph response.
+
     ContextPacket:
       type: object
       additionalProperties: false
@@ -1534,48 +1599,24 @@ components:
           type: string
           description: Packet schema version independent of API version.
           examples: ["context-fabric.packet/v1"]
+        packet_id:
+          type: string
         organization_id:
           type: string
         purpose:
           $ref: "#/components/schemas/Purpose"
         summary:
           type: string
-        facts:
+        redaction_profile:
+          type: string
+        nodes:
           type: array
           items:
-            type: object
-            additionalProperties: false
-            properties:
-              text: { type: string }
-              confidence: { type: number, minimum: 0, maximum: 1 }
-              review_state:
-                type: string
-                enum: [unreviewed, approved, rejected, needs_review]
-              citation_ids:
-                type: array
-                items: { type: string }
-        timeline:
+            $ref: "#/components/schemas/GraphNode"
+        edges:
           type: array
           items:
-            type: object
-            additionalProperties: false
-            properties:
-              at: { type: string, format: date-time }
-              text: { type: string }
-              citation_ids:
-                type: array
-                items: { type: string }
-        stakeholders:
-          type: array
-          items:
-            type: object
-            additionalProperties: false
-            properties:
-              display_name: { type: string }
-              role: { type: string }
-              citation_ids:
-                type: array
-                items: { type: string }
+            $ref: "#/components/schemas/GraphEdge"
         citations:
           type: array
           items:
@@ -1600,7 +1641,62 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        truncated:
+          type: boolean
+          description: True when node/edge budgets or traversal caps were hit.
+        next_cursor:
+          type: string
+          description: Opaque resume token when truncated is true.
         responded_at:
+          type: string
+          format: date-time
+
+    GraphNode:
+      type: object
+      additionalProperties: false
+      required: [resource_id]
+      properties:
+        resource_id: { type: string }
+        kind: { type: string }
+        title: { type: string }
+        classification: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        revision_id: { type: string }
+        state: { type: string }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+          description: Sanitized attributes (no visibility_ref or secrets).
+
+    GraphEdge:
+      type: object
+      additionalProperties: false
+      required: [edge_id, from_id, to_id, predicate]
+      properties:
+        id:
+          type: string
+          description: Edge identifier (JSON field edge_id on the wire).
+        edge_id: { type: string }
+        organization_id: { type: string }
+        from_id: { type: string }
+        to_id: { type: string }
+        predicate: { type: string }
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        state: { type: string }
+        lifecycle_state: { type: string }
+        sync_authz: { type: boolean }
+        attributes:
+          type: object
+          additionalProperties: { type: string }
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
           type: string
           format: date-time
 

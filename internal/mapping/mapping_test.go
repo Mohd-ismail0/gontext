@@ -243,3 +243,30 @@ func TestUnknownClassificationRejected(t *testing.T) {
 		t.Fatal("unknown classification must rank < 0")
 	}
 }
+
+func TestConstraintsRejectExplicitDisable(t *testing.T) {
+	spec := mapping.Spec{
+		OrganizationID: "org1",
+		Constraints: mapping.Constraints{
+			CannotMintOrganization:     true,
+			CannotBroadenACL:           false,
+			AuthorityCeilingFromSource: true,
+			ClientFieldsMayOnlyNarrow:  true,
+		},
+		Mappings: mapping.FieldMappings{
+			Classification:  &mapping.Expr{Expr: `"internal"`},
+			Trust:           &mapping.Expr{Expr: `"trusted_internal"`},
+			SourceAuthority: &mapping.Expr{Expr: `"corroborating"`},
+			ResourceType:    &mapping.Expr{Expr: `"event"`},
+		},
+	}
+	_, err := mapping.Apply(spec, map[string]any{}, mapping.SourceCeilings{
+		OrganizationID:        "org1",
+		TrustCeiling:          "trusted_system",
+		AuthorityCeiling:      "source_of_truth",
+		ClassificationCeiling: "confidential",
+	}, mapping.Options{})
+	if err == nil {
+		t.Fatal("expected constraint disable to be rejected")
+	}
+}

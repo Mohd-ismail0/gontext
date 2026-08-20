@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -230,7 +231,7 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 		}
 	}
 
-	nodes, edges := p.visibleSubgraph(ctx, principal, req, allowedResourceIDs(citations), 0, nil)
+	nodes, edges, truncated := p.visibleSubgraph(ctx, principal, req, allowedResourceIDs(citations), 0, nil)
 
 	auditID := platform.NewEventID()
 	packet := ports.ContextPacket{
@@ -248,6 +249,8 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 		AuthzRevision:      authzRev,
 		AuditID:            auditID,
 		ActionRestrictions: []string{"outbound.send"},
+		Truncated:          truncated,
+		NextCursor:         truncationCursor(truncated, edges),
 		GeneratedAt:        time.Now().UTC(),
 	}
 
@@ -460,8 +463,10 @@ func (p *Pipeline) Graph(ctx context.Context, req Request) (ports.ContextPacket,
 		return p.emptyPacket(ctx, principal, req, "AUTHZ_DENY", nil)
 	}
 
-	nodes, edges := p.visibleSubgraph(ctx, principal, req, []string{req.ResourceID}, req.Depth, req.Predicates)
+	nodes, edges, truncated := p.visibleSubgraph(ctx, principal, req, []string{req.ResourceID}, req.Depth, req.Predicates)
 	if req.MaxNodes > 0 && len(nodes) > req.MaxNodes {
+		truncated = true
+		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ResourceID < nodes[j].ResourceID })
 		nodes = nodes[:req.MaxNodes]
 		allowed := map[string]bool{}
 		for _, n := range nodes {
@@ -506,6 +511,8 @@ func (p *Pipeline) Graph(ctx context.Context, req Request) (ports.ContextPacket,
 		AuthzRevision:      authzRev,
 		AuditID:            auditID,
 		ActionRestrictions: []string{"outbound.send"},
+		Truncated:          truncated,
+		NextCursor:         truncationCursor(truncated, edges),
 		GeneratedAt:        time.Now().UTC(),
 	}
 
@@ -582,20 +589,40 @@ func (p *Pipeline) batchAllow(ctx context.Context, principal ports.Principal, re
 	return allowed, authzRev, nil
 }
 
-// visibleSubgraph returns nodes/edges the principal may see.
-// depth=0 keeps only seed nodes and edges whose both ends are in the seed set.
-// depth>0 BFS-expands via ledger edges; every neighbor is BatchChecked before inclusion.
-func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principal, req Request, seeds []string, depth int, predicates []string) ([]ports.GraphNode, []ports.GraphEdge) {
-	allowed := map[string]bool{}
+// visibleSubgraph returns the caller's final visible subgraph after AuthZ and policy.
+// Edges are filtered against the surviving node set only (ADR 0013).
+func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principal, req Request, seeds []string, depth int, predicates []string) ([]ports.GraphNode, []ports.GraphEdge, bool) {
+	const edgeCap = 500
+	truncated := false
+
+	// BatchCheck seeds first — never trust caller-supplied IDs as already authorized.
+	seedIDs := make([]string, 0, len(seeds))
+	seenSeed := map[string]bool{}
 	for _, id := range seeds {
-		if id != "" {
-			allowed[id] = true
+		if id == "" || seenSeed[id] {
+			continue
+		}
+		seenSeed[id] = true
+		seedIDs = append(seedIDs, id)
+	}
+	sort.Strings(seedIDs)
+	authzOK := map[string]bool{}
+	if len(seedIDs) > 0 {
+		ok, _, err := p.batchAllow(ctx, principal, req, seedIDs)
+		if err != nil {
+			return nil, nil, false
+		}
+		for _, id := range seedIDs {
+			if ok[id] {
+				authzOK[id] = true
+			}
 		}
 	}
-	frontier := make([]string, 0, len(allowed))
-	for id := range allowed {
+	frontier := make([]string, 0, len(authzOK))
+	for id := range authzOK {
 		frontier = append(frontier, id)
 	}
+	sort.Strings(frontier)
 
 	for hop := 0; hop < depth; hop++ {
 		if len(frontier) == 0 {
@@ -604,10 +631,14 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		ledgerEdges, err := p.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
 			ResourceIDs: frontier,
 			Predicates:  predicates,
-			Limit:       500,
+			Limit:       edgeCap + 1,
 		})
 		if err != nil {
 			break
+		}
+		if len(ledgerEdges) > edgeCap {
+			truncated = true
+			ledgerEdges = ledgerEdges[:edgeCap]
 		}
 		neighborSet := map[string]bool{}
 		var neighbors []string
@@ -616,12 +647,13 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 				continue
 			}
 			for _, end := range []string{e.FromID, e.ToID} {
-				if !allowed[end] && !neighborSet[end] {
+				if !authzOK[end] && !neighborSet[end] {
 					neighborSet[end] = true
 					neighbors = append(neighbors, end)
 				}
 			}
 		}
+		sort.Strings(neighbors)
 		if len(neighbors) == 0 {
 			break
 		}
@@ -632,41 +664,27 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		next := make([]string, 0, len(neighbors))
 		for _, id := range neighbors {
 			if ok[id] {
-				allowed[id] = true
+				authzOK[id] = true
 				next = append(next, id)
 			}
 		}
 		frontier = next
 	}
 
-	allIDs := make([]string, 0, len(allowed))
-	for id := range allowed {
-		allIDs = append(allIDs, id)
+	// Hydrate + policy: build final visible set.
+	visible := map[string]ports.GraphNode{}
+	ids := make([]string, 0, len(authzOK))
+	for id := range authzOK {
+		ids = append(ids, id)
 	}
-	ledgerEdges, err := p.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
-		ResourceIDs: allIDs,
-		Predicates:  predicates,
-		Limit:       500,
-	})
-	var finalEdges []ports.GraphEdge
-	if err == nil {
-		seen := map[string]bool{}
-		for _, e := range ledgerEdges {
-			if e.State == "TOMBSTONED" || seen[e.EdgeID] {
-				continue
-			}
-			if allowed[e.FromID] && allowed[e.ToID] {
-				seen[e.EdgeID] = true
-				finalEdges = append(finalEdges, e)
-			}
-		}
-	}
-
-	nodes := make([]ports.GraphNode, 0, len(allowed))
-	for id := range allowed {
+	sort.Strings(ids)
+	for _, id := range ids {
 		rec, err := p.Ledger.GetRecord(ctx, req.OrgID, id)
 		if err != nil || deletion.IsTombstoned(rec.State) {
 			continue
+		}
+		if rec.State == ports.LifecyclePlaceholder || rec.State == ports.LifecycleEnsured {
+			continue // non-retrievable placeholders
 		}
 		rpol, err := p.Policy.Evaluate(ctx, ports.PolicyEval{
 			Principal:      principal,
@@ -678,7 +696,7 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		if err != nil || !rpol.Allow {
 			continue
 		}
-		nodes = append(nodes, ports.GraphNode{
+		visible[id] = ports.GraphNode{
 			ResourceID:     rec.ResourceID,
 			Kind:           rec.Kind,
 			Title:          rec.Title,
@@ -686,8 +704,81 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 			Labels:         rec.Labels,
 			RevisionID:     rec.CurrentRevID,
 			State:          rec.State,
-			Attributes:     rec.Attributes,
-		})
+			Attributes:     sanitizeNodeAttrs(rec.Attributes),
+		}
 	}
-	return nodes, finalEdges
+
+	visIDs := make([]string, 0, len(visible))
+	for id := range visible {
+		visIDs = append(visIDs, id)
+	}
+	sort.Strings(visIDs)
+
+	ledgerEdges, err := p.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
+		ResourceIDs: visIDs,
+		Predicates:  predicates,
+		Limit:       edgeCap + 1,
+	})
+	var finalEdges []ports.GraphEdge
+	if err == nil {
+		if len(ledgerEdges) > edgeCap {
+			truncated = true
+			ledgerEdges = ledgerEdges[:edgeCap]
+		}
+		seen := map[string]bool{}
+		for _, e := range ledgerEdges {
+			if e.State == "TOMBSTONED" || seen[e.EdgeID] {
+				continue
+			}
+			if _, okFrom := visible[e.FromID]; !okFrom {
+				continue
+			}
+			if _, okTo := visible[e.ToID]; !okTo {
+				continue
+			}
+			seen[e.EdgeID] = true
+			finalEdges = append(finalEdges, e)
+		}
+	}
+	sort.Slice(finalEdges, func(i, j int) bool {
+		if finalEdges[i].FromID != finalEdges[j].FromID {
+			return finalEdges[i].FromID < finalEdges[j].FromID
+		}
+		if finalEdges[i].Predicate != finalEdges[j].Predicate {
+			return finalEdges[i].Predicate < finalEdges[j].Predicate
+		}
+		return finalEdges[i].ToID < finalEdges[j].ToID
+	})
+
+	nodes := make([]ports.GraphNode, 0, len(visIDs))
+	for _, id := range visIDs {
+		nodes = append(nodes, visible[id])
+	}
+	return nodes, finalEdges, truncated
+}
+
+func sanitizeNodeAttrs(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, v := range in {
+		switch k {
+		case "visibility_ref", "placeholder", "ensured", "signing_secret", "mapping_spec":
+			continue
+		default:
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func truncationCursor(truncated bool, edges []ports.GraphEdge) string {
+	if !truncated || len(edges) == 0 {
+		return ""
+	}
+	return "edge:" + edges[len(edges)-1].EdgeID
 }

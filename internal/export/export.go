@@ -42,10 +42,21 @@ type Manifest struct {
 	Contents       []ContentEntry    `json:"contents"`
 	SchemaVersions map[string]string `json:"schema_versions,omitempty"`
 	// Embedded payloads for memory/demo round-trip (never include secrets).
-	Records    []ports.Record             `json:"records,omitempty"`
-	Revisions  []ports.Revision           `json:"revisions,omitempty"`
-	Sources    []ports.SourceRegistration `json:"sources,omitempty"`
-	Tombstones []Tombstone                `json:"tombstones,omitempty"`
+	Records      []ports.Record             `json:"records,omitempty"`
+	Revisions    []ports.Revision           `json:"revisions,omitempty"`
+	Sources      []ports.SourceRegistration `json:"sources,omitempty"`
+	Tombstones   []Tombstone                `json:"tombstones,omitempty"`
+	GraphEdges   []ports.GraphEdge          `json:"graph_edges,omitempty"`
+	AuthzTuples  []AuthzTupleManifest       `json:"authz_tuples,omitempty"`
+}
+
+// AuthzTupleManifest is a portable AuthZ relationship required by sync_authz parent edges.
+type AuthzTupleManifest struct {
+	Operation string `json:"operation"`
+	Object    string `json:"object"`
+	Relation  string `json:"relation"`
+	Subject   string `json:"subject"`
+	EdgeID    string `json:"edge_id,omitempty"`
 }
 
 // Tombstone is a metadata-only deleted resource marker.
@@ -113,16 +124,46 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		records[i].Attributes = scrubSecrets(records[i].Attributes)
 	}
 
+	edges, err := s.Ledger.ListEdges(ctx, orgID, ports.EdgeListOptions{IncludeDead: true, Limit: 50_000})
+	if err != nil {
+		return Manifest{}, err
+	}
+	sort.Slice(edges, func(i, j int) bool { return edges[i].EdgeID < edges[j].EdgeID })
+
+	authzTuples := make([]AuthzTupleManifest, 0)
+	for _, e := range edges {
+		if e.State != "ACTIVE" || !e.SyncAuthz || e.Predicate != ports.EdgeParent {
+			continue
+		}
+		authzTuples = append(authzTuples, AuthzTupleManifest{
+			Operation: "write",
+			Object:    "resource:" + e.FromID,
+			Relation:  "parent",
+			Subject:   "resource:" + e.ToID,
+			EdgeID:    e.EdgeID,
+		})
+	}
+	sort.Slice(authzTuples, func(i, j int) bool {
+		if authzTuples[i].Object != authzTuples[j].Object {
+			return authzTuples[i].Object < authzTuples[j].Object
+		}
+		return authzTuples[i].Subject < authzTuples[j].Subject
+	})
+
 	recordsJSON := mustCanonicalJSON(records)
 	revsJSON := mustCanonicalJSON(revisions)
 	sourcesJSON := mustCanonicalJSON(sources)
 	tombsJSON := mustCanonicalJSON(tombstones)
+	edgesJSON := mustCanonicalJSON(edges)
+	authzJSON := mustCanonicalJSON(authzTuples)
 
 	contents := []ContentEntry{
 		entry("records.json", "records", recordsJSON, len(records)),
 		entry("revisions.json", "events", revsJSON, len(revisions)),
 		entry("sources.json", "source_registrations", sourcesJSON, len(sources)),
 		entry("tombstones.json", "tombstones", tombsJSON, len(tombstones)),
+		entry("graph_edges.json", "graph_edges", edgesJSON, len(edges)),
+		entry("authz_tuples.json", "authz_tuples", authzJSON, len(authzTuples)),
 	}
 
 	m := Manifest{
@@ -134,14 +175,18 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		Status:         "completed",
 		Contents:       contents,
 		SchemaVersions: map[string]string{
-			"record":  "context-fabric.record/v1",
-			"export":  FormatVersion,
-			"packet":  "context-fabric.packet/v1",
+			"record":       "context-fabric.record/v1",
+			"export":       FormatVersion,
+			"packet":       "context-fabric.packet/v1",
+			"graph_edge":   "context-fabric.graph-edge/v1",
+			"authz_tuple":  "context-fabric.authz-tuple/v1",
 		},
-		Records:    records,
-		Revisions:  revisions,
-		Sources:    sources,
-		Tombstones: tombstones,
+		Records:     records,
+		Revisions:   revisions,
+		Sources:     sources,
+		Tombstones:  tombstones,
+		GraphEdges:  edges,
+		AuthzTuples: authzTuples,
 	}
 	m.Checksums = map[string]string{
 		"manifest_sha256": HashManifest(m),
@@ -190,6 +235,31 @@ func (s *Service) ImportInto(ctx context.Context, targetOrgID string, m Manifest
 				return err
 			}
 		}
+		// Import edges after records so endpoint FKs / placeholders exist.
+		for _, e := range m.GraphEdges {
+			e.OrgID = targetOrgID
+			if err := s.Ledger.UpsertEdge(ctx, tx, e); err != nil {
+				return err
+			}
+			if e.State == "ACTIVE" && e.SyncAuthz && e.Predicate == ports.EdgeParent {
+				now := s.now()
+				if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
+					ID:          platform.NewEventID(),
+					OrgID:       targetOrgID,
+					Operation:   "write",
+					Object:      "resource:" + e.FromID,
+					Relation:    "parent",
+					Subject:     "resource:" + e.ToID,
+					EdgeID:      e.EdgeID,
+					Status:      "pending",
+					CreatedAt:   now,
+					UpdatedAt:   now,
+					NextAttempt: now,
+				}); err != nil {
+					return err
+				}
+			}
+		}
 		return nil
 	})
 }
@@ -205,6 +275,8 @@ func HashManifest(m Manifest) string {
 		Revisions      []ports.Revision           `json:"revisions"`
 		Sources        []ports.SourceRegistration `json:"sources"`
 		Tombstones     []Tombstone                `json:"tombstones"`
+		GraphEdges     []ports.GraphEdge          `json:"graph_edges"`
+		AuthzTuples    []AuthzTupleManifest       `json:"authz_tuples"`
 	}{
 		FormatVersion:  m.FormatVersion,
 		OrganizationID: m.OrganizationID,
@@ -213,6 +285,8 @@ func HashManifest(m Manifest) string {
 		Revisions:      m.Revisions,
 		Sources:        m.Sources,
 		Tombstones:     m.Tombstones,
+		GraphEdges:     m.GraphEdges,
+		AuthzTuples:    m.AuthzTuples,
 	}
 	raw := mustCanonicalJSON(payload)
 	sum := sha256.Sum256(raw)
