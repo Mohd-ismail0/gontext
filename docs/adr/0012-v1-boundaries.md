@@ -15,7 +15,7 @@ Scope creep (attachments, customer callers, agent send, Kafka, OPA) threatens de
 - Employees, service principals, delegated agents
 - Generic CloudEvents intake + MappingSpec
 - Chatwoot text connector + synthetic second connector for conformance
-- REST + read-only MCP retrieval (`search`, `get`, `brief`, `request_access`)
+- REST + read-only MCP retrieval (`search`, `get`, `brief`, `graph`, `request_access`); context is a ReBAC-gated knowledge graph (ADR 0013)
 - Cursor feed + signed webhooks (metadata only)
 - Organization export/import
 - OpenFGA + Go PolicyProvider

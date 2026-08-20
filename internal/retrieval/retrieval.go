@@ -48,8 +48,11 @@ type Request struct {
 	Filters     map[string]string // include_tags (comma), context_space_id, resource_id, ...
 	Consistency ports.ConsistencyMode
 	Scopes      []string
-	Action      string // context.search | context.get | context.brief
-	ResourceID  string // for get/brief
+	Action      string // context.search | context.get | context.brief | context.graph
+	ResourceID  string // for get/brief/graph seed
+	Depth       int    // graph expansion depth (default 1)
+	MaxNodes    int    // hard cap on returned nodes
+	Predicates  []string
 	Delegation  *ports.DelegationGrant
 }
 
@@ -227,6 +230,8 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 		}
 	}
 
+	nodes, edges := p.visibleSubgraph(ctx, principal, req, allowedResourceIDs(citations), 0, nil)
+
 	auditID := platform.NewEventID()
 	packet := ports.ContextPacket{
 		Version:            PacketVersion,
@@ -234,9 +239,11 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 		OrgID:              req.OrgID,
 		Purpose:            req.Purpose,
 		RedactionProfile:   pol.RedactionProfile,
+		Nodes:              nodes,
+		Edges:              edges,
 		Citations:          citations,
 		Redactions:          redactions,
-		Summary:            fmt.Sprintf("%d cited resources", len(citations)),
+		Summary:            fmt.Sprintf("%d nodes, %d edges", len(nodes), len(edges)),
 		PolicyRevision:     policy.Revision,
 		AuthzRevision:      authzRev,
 		AuditID:            auditID,
@@ -300,7 +307,7 @@ func gateScopes(scopes []string, action string, allowEmpty bool) error {
 	}
 	need := "context:search"
 	switch action {
-	case "context.get", "context.brief":
+	case "context.get", "context.brief", "context.graph":
 		need = "context:read"
 	case "context.search":
 		need = "context:search"
@@ -369,4 +376,318 @@ func sampleIDs(cites []ports.Citation, n int) []string {
 func hashQuery(q string) string {
 	sum := sha256.Sum256([]byte(q))
 	return hex.EncodeToString(sum[:8])
+}
+
+// Graph expands a seed resource into the caller's visible knowledge subgraph (ADR 0013).
+func (p *Pipeline) Graph(ctx context.Context, req Request) (ports.ContextPacket, error) {
+	if req.Action == "" {
+		req.Action = "context.graph"
+	}
+	if req.ResourceID == "" {
+		return ports.ContextPacket{}, platform.ErrValidation("resource_id required")
+	}
+	if req.Depth <= 0 {
+		req.Depth = 1
+	}
+	if req.Depth > 4 {
+		req.Depth = 4
+	}
+	if req.MaxNodes <= 0 {
+		req.MaxNodes = 50
+	}
+	if req.MaxNodes > 200 {
+		req.MaxNodes = 200
+	}
+	if req.Limit <= 0 {
+		req.Limit = req.MaxNodes
+	}
+	if req.Consistency == "" {
+		req.Consistency = ports.ConsistencyMinLatency
+	}
+
+	principal, err := p.Identity.Authenticate(ctx, req.Credentials)
+	if err != nil {
+		return ports.ContextPacket{}, err
+	}
+	if principal.OrgID == "" {
+		return ports.ContextPacket{}, platform.ErrForbidden("principal missing organization")
+	}
+	if req.OrgID == "" {
+		req.OrgID = principal.OrgID
+	} else if principal.OrgID != req.OrgID {
+		return ports.ContextPacket{}, platform.ErrForbidden("organization mismatch")
+	}
+
+	scopes := principal.Scopes
+	if len(scopes) == 0 {
+		scopes = req.Scopes
+	}
+	if err := gateScopes(scopes, req.Action, p.AllowEmptyScopes); err != nil {
+		return ports.ContextPacket{}, err
+	}
+
+	scope, err := p.Authz.ResolveCandidateScope(ctx, ports.ScopeResolve{
+		Principal:   principal,
+		Action:      req.Action,
+		Consistency: req.Consistency,
+	})
+	if err != nil {
+		return ports.ContextPacket{}, err
+	}
+	if scope.ReasonCode == "AUTHZ_SCOPE_DENY" {
+		return p.emptyPacket(ctx, principal, req, "AUTHZ_SCOPE_DENY", nil)
+	}
+
+	pol, err := p.Policy.Evaluate(ctx, ports.PolicyEval{
+		Principal:      principal,
+		Action:         req.Action,
+		Purpose:        req.Purpose,
+		Classification: "internal",
+		RequestedLimit: req.MaxNodes,
+	})
+	if err != nil {
+		return ports.ContextPacket{}, err
+	}
+	if !pol.Allow {
+		return p.emptyPacket(ctx, principal, req, pol.ReasonCode, nil)
+	}
+
+	seedAllow, authzRev, err := p.batchAllow(ctx, principal, req, []string{req.ResourceID})
+	if err != nil {
+		return ports.ContextPacket{}, err
+	}
+	if !seedAllow[req.ResourceID] {
+		return p.emptyPacket(ctx, principal, req, "AUTHZ_DENY", nil)
+	}
+
+	nodes, edges := p.visibleSubgraph(ctx, principal, req, []string{req.ResourceID}, req.Depth, req.Predicates)
+	if req.MaxNodes > 0 && len(nodes) > req.MaxNodes {
+		nodes = nodes[:req.MaxNodes]
+		allowed := map[string]bool{}
+		for _, n := range nodes {
+			allowed[n.ResourceID] = true
+		}
+		filtered := edges[:0]
+		for _, e := range edges {
+			if allowed[e.FromID] && allowed[e.ToID] {
+				filtered = append(filtered, e)
+			}
+		}
+		edges = filtered
+	}
+
+	citations := make([]ports.Citation, 0, len(nodes))
+	for _, n := range nodes {
+		snippet := n.Title
+		if snippet == "" {
+			snippet = n.ResourceID
+		}
+		citations = append(citations, ports.Citation{
+			CitationID: platform.NewEventID(),
+			ResourceID: n.ResourceID,
+			RevisionID: n.RevisionID,
+			Snippet:    snippet,
+		})
+	}
+
+	auditID := platform.NewEventID()
+	packet := ports.ContextPacket{
+		Version:            PacketVersion,
+		PacketID:           platform.NewEventID(),
+		OrgID:              req.OrgID,
+		Purpose:            req.Purpose,
+		RedactionProfile:   pol.RedactionProfile,
+		Nodes:              nodes,
+		Edges:              edges,
+		Citations:          citations,
+		Redactions:          nil,
+		Summary:            fmt.Sprintf("subgraph depth=%d nodes=%d edges=%d", req.Depth, len(nodes), len(edges)),
+		PolicyRevision:     policy.Revision,
+		AuthzRevision:      authzRev,
+		AuditID:            auditID,
+		ActionRestrictions: []string{"outbound.send"},
+		GeneratedAt:        time.Now().UTC(),
+	}
+
+	_ = p.Audit.Append(ctx, ports.AuditEvent{
+		AuditID:           auditID,
+		OrgID:             req.OrgID,
+		PrincipalID:       principal.ID,
+		PrincipalKind:     principal.Kind,
+		Action:            req.Action,
+		ReasonCode:        "GRAPH_OK",
+		AuthzModelRev:     authzRev,
+		PolicyRevision:    policy.Revision,
+		ResourceCount:     len(nodes),
+		ResourceIDsSample: sampleNodeIDs(nodes, 8),
+		Attributes: map[string]string{
+			"seed":  req.ResourceID,
+			"depth": fmt.Sprintf("%d", req.Depth),
+		},
+		CreatedAt: time.Now().UTC(),
+	})
+	return packet, nil
+}
+
+func allowedResourceIDs(cites []ports.Citation) []string {
+	out := make([]string, 0, len(cites))
+	seen := map[string]bool{}
+	for _, c := range cites {
+		if c.ResourceID == "" || seen[c.ResourceID] {
+			continue
+		}
+		seen[c.ResourceID] = true
+		out = append(out, c.ResourceID)
+	}
+	return out
+}
+
+func sampleNodeIDs(nodes []ports.GraphNode, n int) []string {
+	out := make([]string, 0, n)
+	for _, node := range nodes {
+		out = append(out, node.ResourceID)
+		if len(out) >= n {
+			break
+		}
+	}
+	return out
+}
+
+func (p *Pipeline) batchAllow(ctx context.Context, principal ports.Principal, req Request, ids []string) (map[string]bool, string, error) {
+	allowed := make(map[string]bool, len(ids))
+	if len(ids) == 0 {
+		return allowed, "", nil
+	}
+	checks := make([]ports.AuthzCheck, 0, len(ids))
+	for _, id := range ids {
+		checks = append(checks, ports.AuthzCheck{
+			Principal:   principal,
+			Action:      "can_read",
+			ResourceID:  id,
+			Consistency: req.Consistency,
+			Delegation:  req.Delegation,
+		})
+	}
+	decisions, err := p.Authz.BatchCheck(ctx, checks)
+	if err != nil {
+		return nil, "", err
+	}
+	authzRev := ""
+	for i, id := range ids {
+		if i < len(decisions) && decisions[i].Allowed {
+			allowed[id] = true
+			authzRev = decisions[i].ModelRevision
+		}
+	}
+	return allowed, authzRev, nil
+}
+
+// visibleSubgraph returns nodes/edges the principal may see.
+// depth=0 keeps only seed nodes and edges whose both ends are in the seed set.
+// depth>0 BFS-expands via ledger edges; every neighbor is BatchChecked before inclusion.
+func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principal, req Request, seeds []string, depth int, predicates []string) ([]ports.GraphNode, []ports.GraphEdge) {
+	allowed := map[string]bool{}
+	for _, id := range seeds {
+		if id != "" {
+			allowed[id] = true
+		}
+	}
+	frontier := make([]string, 0, len(allowed))
+	for id := range allowed {
+		frontier = append(frontier, id)
+	}
+
+	for hop := 0; hop < depth; hop++ {
+		if len(frontier) == 0 {
+			break
+		}
+		ledgerEdges, err := p.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
+			ResourceIDs: frontier,
+			Predicates:  predicates,
+			Limit:       500,
+		})
+		if err != nil {
+			break
+		}
+		neighborSet := map[string]bool{}
+		var neighbors []string
+		for _, e := range ledgerEdges {
+			if e.State == "TOMBSTONED" {
+				continue
+			}
+			for _, end := range []string{e.FromID, e.ToID} {
+				if !allowed[end] && !neighborSet[end] {
+					neighborSet[end] = true
+					neighbors = append(neighbors, end)
+				}
+			}
+		}
+		if len(neighbors) == 0 {
+			break
+		}
+		ok, _, err := p.batchAllow(ctx, principal, req, neighbors)
+		if err != nil {
+			break
+		}
+		next := make([]string, 0, len(neighbors))
+		for _, id := range neighbors {
+			if ok[id] {
+				allowed[id] = true
+				next = append(next, id)
+			}
+		}
+		frontier = next
+	}
+
+	allIDs := make([]string, 0, len(allowed))
+	for id := range allowed {
+		allIDs = append(allIDs, id)
+	}
+	ledgerEdges, err := p.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
+		ResourceIDs: allIDs,
+		Predicates:  predicates,
+		Limit:       500,
+	})
+	var finalEdges []ports.GraphEdge
+	if err == nil {
+		seen := map[string]bool{}
+		for _, e := range ledgerEdges {
+			if e.State == "TOMBSTONED" || seen[e.EdgeID] {
+				continue
+			}
+			if allowed[e.FromID] && allowed[e.ToID] {
+				seen[e.EdgeID] = true
+				finalEdges = append(finalEdges, e)
+			}
+		}
+	}
+
+	nodes := make([]ports.GraphNode, 0, len(allowed))
+	for id := range allowed {
+		rec, err := p.Ledger.GetRecord(ctx, req.OrgID, id)
+		if err != nil || deletion.IsTombstoned(rec.State) {
+			continue
+		}
+		rpol, err := p.Policy.Evaluate(ctx, ports.PolicyEval{
+			Principal:      principal,
+			Action:         req.Action,
+			Purpose:        req.Purpose,
+			Classification: rec.Classification,
+			Record:         &rec,
+		})
+		if err != nil || !rpol.Allow {
+			continue
+		}
+		nodes = append(nodes, ports.GraphNode{
+			ResourceID:     rec.ResourceID,
+			Kind:           rec.Kind,
+			Title:          rec.Title,
+			Classification: rec.Classification,
+			Labels:         rec.Labels,
+			RevisionID:     rec.CurrentRevID,
+			State:          rec.State,
+			Attributes:     rec.Attributes,
+		})
+	}
+	return nodes, finalEdges
 }

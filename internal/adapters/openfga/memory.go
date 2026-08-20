@@ -70,15 +70,7 @@ func (m *Memory) BatchCheck(_ context.Context, reqs []ports.AuthzCheck) ([]ports
 		user := formatUser(r.Principal)
 		obj := formatObject(r.ResourceID)
 		rel := mapRelation(r.Action)
-		allowed := m.has(obj, rel, user)
-		// Also honor reader/restricted_reader if can_read requested.
-		if !allowed && rel == "can_read" {
-			allowed = m.has(obj, "reader", user) || m.has(obj, "restricted_reader", user) ||
-				m.has(obj, "owner", user) || m.has(obj, "assignee", user)
-		}
-		if !allowed && rel == "can_delete" {
-			allowed = m.has(obj, "owner", user) || m.has(obj, "can_manage", user) || m.has(obj, "can_admin", user)
-		}
+		allowed := m.can(obj, rel, user, map[string]bool{})
 		code := "AUTHZ_DENY"
 		if allowed {
 			code = "AUTHZ_ALLOW"
@@ -131,4 +123,49 @@ func (m *Memory) has(object, relation, subject string) bool {
 		return false
 	}
 	return subs[subject]
+}
+
+// can evaluates OpenFGA-shaped can_read / can_manage including parent inheritance.
+func (m *Memory) can(object, relation, subject string, visiting map[string]bool) bool {
+	key := object + "|" + relation
+	if visiting[key] {
+		return false
+	}
+	visiting[key] = true
+
+	switch relation {
+	case "can_read":
+		if m.has(object, "can_read", subject) ||
+			m.has(object, "reader", subject) ||
+			m.has(object, "restricted_reader", subject) ||
+			m.has(object, "owner", subject) ||
+			m.has(object, "assignee", subject) {
+			return true
+		}
+		if m.can(object, "can_manage", subject, visiting) {
+			return true
+		}
+		for parent := range m.Relations[object]["parent"] {
+			if m.can(parent, "can_read", subject, visiting) {
+				return true
+			}
+		}
+		return false
+	case "can_manage":
+		if m.has(object, "can_manage", subject) ||
+			m.has(object, "owner", subject) ||
+			m.has(object, "can_admin", subject) {
+			return true
+		}
+		for parent := range m.Relations[object]["parent"] {
+			if m.can(parent, "can_manage", subject, visiting) {
+				return true
+			}
+		}
+		return false
+	case "can_delete":
+		return m.has(object, "owner", subject) || m.can(object, "can_manage", subject, visiting)
+	default:
+		return m.has(object, relation, subject)
+	}
 }

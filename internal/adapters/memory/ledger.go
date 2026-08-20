@@ -30,6 +30,7 @@ type Store struct {
 	exports      map[string]map[string]ExportJob
 	holds        map[string]map[string]bool // org -> resourceID -> legal hold
 	mappings     map[string]mapping.Spec    // sourceID -> Spec
+	edges        map[string]map[string]ports.GraphEdge // org -> edgeID -> edge
 }
 
 // WebhookSubscription is a test/demo webhook registration.
@@ -82,6 +83,7 @@ func NewStore() *Store {
 		exports:     make(map[string]map[string]ExportJob),
 		holds:       make(map[string]map[string]bool),
 		mappings:    make(map[string]mapping.Spec),
+		edges:       make(map[string]map[string]ports.GraphEdge),
 	}
 }
 
@@ -516,6 +518,111 @@ func (s *Store) ListDelegations(_ context.Context, orgID, actorID string) ([]por
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) UpsertEdge(_ context.Context, _ ports.Tx, edge ports.GraphEdge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if edge.OrgID == "" || edge.FromID == "" || edge.ToID == "" || edge.Predicate == "" {
+		return platform.ErrValidation("org, from_id, to_id, predicate required")
+	}
+	if edge.FromID == edge.ToID {
+		return platform.ErrValidation("self-edges are not allowed")
+	}
+	if edge.EdgeID == "" {
+		edge.EdgeID = platform.NewEventID()
+	}
+	now := time.Now().UTC()
+	if edge.CreatedAt.IsZero() {
+		edge.CreatedAt = now
+	}
+	edge.UpdatedAt = now
+	if edge.State == "" {
+		edge.State = "ACTIVE"
+	}
+	m := s.edges[edge.OrgID]
+	if m == nil {
+		m = make(map[string]ports.GraphEdge)
+		s.edges[edge.OrgID] = m
+	}
+	// Replace active triple if present.
+	for id, existing := range m {
+		if existing.State == "ACTIVE" &&
+			existing.FromID == edge.FromID &&
+			existing.ToID == edge.ToID &&
+			existing.Predicate == edge.Predicate &&
+			id != edge.EdgeID {
+			existing.State = "TOMBSTONED"
+			existing.UpdatedAt = now
+			m[id] = existing
+		}
+	}
+	m[edge.EdgeID] = edge
+	return nil
+}
+
+func (s *Store) GetEdge(_ context.Context, orgID, edgeID string) (ports.GraphEdge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m := s.edges[orgID]
+	if m == nil {
+		return ports.GraphEdge{}, platform.ErrNotFound("edge not found")
+	}
+	e, ok := m[edgeID]
+	if !ok {
+		return ports.GraphEdge{}, platform.ErrNotFound("edge not found")
+	}
+	return e, nil
+}
+
+func (s *Store) ListEdges(_ context.Context, orgID string, opts ports.EdgeListOptions) ([]ports.GraphEdge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if opts.Limit <= 0 {
+		opts.Limit = 200
+	}
+	wantRes := map[string]bool{}
+	for _, id := range opts.ResourceIDs {
+		wantRes[id] = true
+	}
+	wantPred := map[string]bool{}
+	for _, p := range opts.Predicates {
+		wantPred[p] = true
+	}
+	out := make([]ports.GraphEdge, 0)
+	for _, e := range s.edges[orgID] {
+		if !opts.IncludeDead && e.State == "TOMBSTONED" {
+			continue
+		}
+		if len(wantRes) > 0 && !wantRes[e.FromID] && !wantRes[e.ToID] {
+			continue
+		}
+		if len(wantPred) > 0 && !wantPred[e.Predicate] {
+			continue
+		}
+		out = append(out, e)
+		if len(out) >= opts.Limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) TombstoneEdge(_ context.Context, _ ports.Tx, orgID, edgeID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.edges[orgID]
+	if m == nil {
+		return platform.ErrNotFound("edge not found")
+	}
+	e, ok := m[edgeID]
+	if !ok {
+		return platform.ErrNotFound("edge not found")
+	}
+	e.State = "TOMBSTONED"
+	e.UpdatedAt = time.Now().UTC()
+	m[edgeID] = e
+	return nil
 }
 
 // AppendAudit implements audit.LedgerWriter.

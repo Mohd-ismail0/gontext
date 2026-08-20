@@ -164,12 +164,15 @@ type Revision struct {
 }
 
 // ContextPacket is a governed retrieval response bundle.
+// Nodes + Edges are the caller's visible subgraph (ADR 0013).
 type ContextPacket struct {
 	Version            string      `json:"version"`
 	PacketID           string      `json:"packet_id,omitempty"`
 	OrgID              string      `json:"organization_id"`
 	Purpose            string      `json:"purpose"`
 	RedactionProfile   string      `json:"redaction_profile,omitempty"`
+	Nodes              []GraphNode `json:"nodes,omitempty"`
+	Edges              []GraphEdge `json:"edges,omitempty"`
 	Citations          []Citation  `json:"citations"`
 	Redactions          []Redaction `json:"redactions"`
 	Summary            string      `json:"summary,omitempty"`
@@ -179,6 +182,42 @@ type ContextPacket struct {
 	ActionRestrictions []string    `json:"action_restrictions"`
 	GeneratedAt        time.Time   `json:"responded_at,omitempty"`
 }
+
+// GraphNode is a retrieval-safe view of a Record in the knowledge graph.
+type GraphNode struct {
+	ResourceID     string            `json:"resource_id"`
+	Kind           string            `json:"kind,omitempty"`
+	Title          string            `json:"title,omitempty"`
+	Classification string            `json:"classification,omitempty"`
+	Labels         []string          `json:"labels,omitempty"`
+	RevisionID     string            `json:"revision_id,omitempty"`
+	State          string            `json:"state,omitempty"`
+	Attributes     map[string]string `json:"attributes,omitempty"`
+}
+
+// GraphEdge is a directed knowledge relation between two resources.
+// Edges never grant access; both endpoints must pass AuthZ independently.
+type GraphEdge struct {
+	EdgeID     string            `json:"edge_id"`
+	OrgID      string            `json:"organization_id,omitempty"`
+	FromID     string            `json:"from_id"`
+	ToID       string            `json:"to_id"`
+	Predicate  string            `json:"predicate"`
+	Confidence float64           `json:"confidence,omitempty"`
+	State      string            `json:"state,omitempty"` // ACTIVE | TOMBSTONED
+	Attributes map[string]string `json:"attributes,omitempty"`
+	CreatedAt  time.Time         `json:"created_at,omitempty"`
+	UpdatedAt  time.Time         `json:"updated_at,omitempty"`
+}
+
+// Edge predicates used by the ledger graph (knowledge, not AuthZ).
+const (
+	EdgeParent      = "parent"
+	EdgeRelatedTo   = "related_to"
+	EdgeMentions    = "mentions"
+	EdgeDerivedFrom = "derived_from"
+	EdgeAssignedTo  = "assigned_to"
+)
 
 // Redaction records an applied disclosure obligation.
 type Redaction struct {

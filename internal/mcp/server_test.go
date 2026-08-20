@@ -53,8 +53,8 @@ func TestToolsListReturnsFourTools(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Result.Tools) != 4 {
-		t.Fatalf("expected 4 tools, got %d: %v", len(resp.Result.Tools), resp.Result.Tools)
+	if len(resp.Result.Tools) != 5 {
+		t.Fatalf("expected 5 tools, got %d: %v", len(resp.Result.Tools), resp.Result.Tools)
 	}
 	names := map[string]bool{}
 	for _, tool := range resp.Result.Tools {

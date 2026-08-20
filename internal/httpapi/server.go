@@ -47,6 +47,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/status", s.auth(s.handleOrgStatus))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context:search", s.auth(s.handleSearch))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/resources/{resourceId}", s.auth(s.handleGet))
+	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context:graph", s.auth(s.handleGraph))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/resources/{resourceId}:delete", s.auth(s.handleDelete))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context:brief", s.auth(s.handleBrief))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/access-requests", s.auth(s.handleAccess))
@@ -210,6 +211,22 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pkt, err := s.App.GetResource(r.Context(), creds, orgID, resourceID, purpose, r.URL.Query().Get("consistency"), scopesOf(creds))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, pkt)
+}
+
+func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
+	orgID := r.PathValue("orgId")
+	creds := bearerCreds(r)
+	var body app.GraphRequest
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, platform.ErrValidation("invalid json"))
+		return
+	}
+	pkt, err := s.App.Graph(r.Context(), creds, orgID, scopesOf(creds), body)
 	if err != nil {
 		writeErr(w, err)
 		return

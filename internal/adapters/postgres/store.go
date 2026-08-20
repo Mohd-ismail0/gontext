@@ -484,6 +484,125 @@ FROM delegation_grants WHERE organization_id=$1`
 	return out, err
 }
 
+func (s *Store) UpsertEdge(ctx context.Context, tx ports.Tx, edge ports.GraphEdge) error {
+	if edge.OrgID == "" || edge.FromID == "" || edge.ToID == "" || edge.Predicate == "" {
+		return platform.ErrValidation("org, from_id, to_id, predicate required")
+	}
+	if edge.FromID == edge.ToID {
+		return platform.ErrValidation("self-edges are not allowed")
+	}
+	if edge.EdgeID == "" {
+		edge.EdgeID = platform.NewEventID()
+	}
+	now := time.Now().UTC()
+	if edge.CreatedAt.IsZero() {
+		edge.CreatedAt = now
+	}
+	edge.UpdatedAt = now
+	if edge.State == "" {
+		edge.State = "ACTIVE"
+	}
+	pg := mustPgTx(tx)
+	_, err := pg.Exec(ctx, `
+UPDATE graph_edges SET lifecycle_state='TOMBSTONED', updated_at=$1
+WHERE organization_id=$2 AND from_id=$3 AND to_id=$4 AND predicate=$5
+  AND lifecycle_state='ACTIVE' AND id<>$6`,
+		edge.UpdatedAt, edge.OrgID, edge.FromID, edge.ToID, edge.Predicate, edge.EdgeID)
+	if err != nil {
+		return err
+	}
+	_, err = pg.Exec(ctx, `
+INSERT INTO graph_edges (id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, attributes, created_at, updated_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+ON CONFLICT (organization_id, id) DO UPDATE SET
+  from_id=EXCLUDED.from_id, to_id=EXCLUDED.to_id, predicate=EXCLUDED.predicate,
+  confidence=EXCLUDED.confidence, lifecycle_state=EXCLUDED.lifecycle_state,
+  attributes=EXCLUDED.attributes, updated_at=EXCLUDED.updated_at`,
+		edge.EdgeID, edge.OrgID, edge.FromID, edge.ToID, edge.Predicate, edge.Confidence,
+		edge.State, mustJSON(edge.Attributes), edge.CreatedAt, edge.UpdatedAt)
+	return err
+}
+
+func (s *Store) GetEdge(ctx context.Context, orgID, edgeID string) (ports.GraphEdge, error) {
+	var e ports.GraphEdge
+	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		var attrs []byte
+		err := tx.QueryRow(ctx, `
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, attributes, created_at, updated_at
+FROM graph_edges WHERE organization_id=$1 AND id=$2`, orgID, edgeID).
+			Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &attrs, &e.CreatedAt, &e.UpdatedAt)
+		if err == pgx.ErrNoRows {
+			return platform.ErrNotFound("edge not found")
+		}
+		if err != nil {
+			return err
+		}
+		_ = json.Unmarshal(attrs, &e.Attributes)
+		return nil
+	})
+	return e, err
+}
+
+func (s *Store) ListEdges(ctx context.Context, orgID string, opts ports.EdgeListOptions) ([]ports.GraphEdge, error) {
+	if opts.Limit <= 0 {
+		opts.Limit = 200
+	}
+	var out []ports.GraphEdge
+	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
+		q := `
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, attributes, created_at, updated_at
+FROM graph_edges WHERE organization_id=$1`
+		args := []any{orgID}
+		argN := 2
+		if !opts.IncludeDead {
+			q += ` AND lifecycle_state='ACTIVE'`
+		}
+		if len(opts.ResourceIDs) > 0 {
+			q += fmt.Sprintf(` AND (from_id = ANY($%d) OR to_id = ANY($%d))`, argN, argN)
+			args = append(args, opts.ResourceIDs)
+			argN++
+		}
+		if len(opts.Predicates) > 0 {
+			q += fmt.Sprintf(` AND predicate = ANY($%d)`, argN)
+			args = append(args, opts.Predicates)
+			argN++
+		}
+		q += fmt.Sprintf(` ORDER BY created_at DESC LIMIT $%d`, argN)
+		args = append(args, opts.Limit)
+
+		rows, err := tx.Query(ctx, q, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var e ports.GraphEdge
+			var attrs []byte
+			if err := rows.Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &attrs, &e.CreatedAt, &e.UpdatedAt); err != nil {
+				return err
+			}
+			_ = json.Unmarshal(attrs, &e.Attributes)
+			out = append(out, e)
+		}
+		return rows.Err()
+	})
+	return out, err
+}
+
+func (s *Store) TombstoneEdge(ctx context.Context, tx ports.Tx, orgID, edgeID string) error {
+	pg := mustPgTx(tx)
+	ct, err := pg.Exec(ctx, `
+UPDATE graph_edges SET lifecycle_state='TOMBSTONED', updated_at=now()
+WHERE organization_id=$1 AND id=$2`, orgID, edgeID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return platform.ErrNotFound("edge not found")
+	}
+	return nil
+}
+
 // PutMappingSpec stores a MappingSpec in mapping_specs when available, else sources.attributes.
 func (s *Store) PutMappingSpec(ctx context.Context, orgID, sourceID string, spec mapping.Spec) error {
 	if orgID == "" || sourceID == "" {

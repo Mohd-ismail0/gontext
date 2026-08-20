@@ -21,7 +21,8 @@ info:
     Never put document bodies, raw PII, credentials, bearer tokens, or secret
     source URLs on any bus payload.
   license:
-    name: Proprietary
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
 
 defaultContentType: application/json
 

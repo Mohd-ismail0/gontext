@@ -181,6 +181,41 @@ func (s *ApplicationService) Brief(ctx context.Context, creds ports.Credentials,
 	})
 }
 
+// GraphRequest is the HTTP/MCP neighborhood body.
+type GraphRequest struct {
+	ResourceID  string   `json:"resource_id"`
+	Purpose     string   `json:"purpose"`
+	Depth       int      `json:"depth"`
+	MaxNodes    int      `json:"max_nodes"`
+	Predicates  []string `json:"predicates,omitempty"`
+	Consistency string   `json:"consistency"`
+}
+
+// Graph returns the caller's visible knowledge subgraph around a seed node.
+func (s *ApplicationService) Graph(ctx context.Context, creds ports.Credentials, orgID string, scopes []string, body GraphRequest) (ports.ContextPacket, error) {
+	if s.Quota != nil {
+		if err := s.Quota.Allow(quota.Key{OrgID: orgID, Op: quota.OpSearch}); err != nil {
+			return ports.ContextPacket{}, err
+		}
+	}
+	cons := ports.ConsistencyMinLatency
+	if body.Consistency == string(ports.ConsistencyFullyConsistent) {
+		cons = ports.ConsistencyFullyConsistent
+	}
+	return s.Retrieve.Graph(ctx, retrieval.Request{
+		Credentials: creds,
+		OrgID:       orgID,
+		Purpose:     body.Purpose,
+		Consistency: cons,
+		Scopes:      scopes,
+		Action:      "context.graph",
+		ResourceID:  body.ResourceID,
+		Depth:       body.Depth,
+		MaxNodes:    body.MaxNodes,
+		Predicates:  body.Predicates,
+	})
+}
+
 func (s *ApplicationService) RequestAccess(ctx context.Context, creds ports.Credentials, orgID string, resourceID, purpose, justification string) (map[string]any, error) {
 	principal, err := s.Identity.Authenticate(ctx, creds)
 	if err != nil {

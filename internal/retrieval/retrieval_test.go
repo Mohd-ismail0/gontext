@@ -144,3 +144,125 @@ func TestSearchReturnsCitationsAndAuditID(t *testing.T) {
 		t.Fatal("expected audit_id")
 	}
 }
+
+func TestGraphHidesDeniedNeighbors(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	idx := memory.NewIndex()
+	authz := openfga.NewMemory()
+	org := "org_acme_0001"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Acme"})
+
+	caseRec := ports.Record{ResourceID: "res_case", OrgID: org, Kind: "case", Title: "Case", Classification: "internal", CurrentRevID: "r1", State: "INDEXED"}
+	noteOK := ports.Record{ResourceID: "res_note_ok", OrgID: org, Kind: "note", Title: "Visible note", Classification: "internal", CurrentRevID: "r1", State: "INDEXED"}
+	noteSecret := ports.Record{ResourceID: "res_note_secret", OrgID: org, Kind: "note", Title: "Secret note", Classification: "restricted", CurrentRevID: "r1", State: "INDEXED"}
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		for _, rec := range []ports.Record{caseRec, noteOK, noteSecret} {
+			if err := store.UpsertRecord(ctx, tx, rec); err != nil {
+				return err
+			}
+		}
+		if err := store.UpsertEdge(ctx, tx, ports.GraphEdge{
+			EdgeID: "e1", OrgID: org, FromID: "res_note_ok", ToID: "res_case", Predicate: ports.EdgeParent,
+		}); err != nil {
+			return err
+		}
+		return store.UpsertEdge(ctx, tx, ports.GraphEdge{
+			EdgeID: "e2", OrgID: org, FromID: "res_note_secret", ToID: "res_case", Predicate: ports.EdgeParent,
+		})
+	})
+
+	authz.AddOrgMember(org, "alice")
+	authz.Grant("resource:res_case", "can_read", "user:alice")
+	authz.Grant("resource:res_note_ok", "can_read", "user:alice")
+	// No grant for res_note_secret.
+
+	pipe := &retrieval.Pipeline{
+		Identity: authn.NewLocal(),
+		Authz:    authz,
+		Policy:   policy.New(),
+		Ledger:   store,
+		Index:    idx,
+		Audit:    audit.NewMemory(),
+	}
+
+	pkt, err := pipe.Graph(ctx, retrieval.Request{
+		Credentials: ports.Credentials{BearerToken: "local:org_acme_0001:alice:employee"},
+		OrgID:       org,
+		Purpose:     "support",
+		ResourceID:  "res_case",
+		Depth:       1,
+		Action:      "context.graph",
+	})
+	if err != nil {
+		t.Fatalf("graph: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, n := range pkt.Nodes {
+		ids[n.ResourceID] = true
+	}
+	if !ids["res_case"] || !ids["res_note_ok"] {
+		t.Fatalf("expected case + visible note, got %#v", ids)
+	}
+	if ids["res_note_secret"] {
+		t.Fatal("secret neighbor must not appear")
+	}
+	for _, e := range pkt.Edges {
+		if e.FromID == "res_note_secret" || e.ToID == "res_note_secret" {
+			t.Fatalf("edge leaked denied node: %#v", e)
+		}
+	}
+	if len(pkt.Edges) != 1 {
+		t.Fatalf("expected 1 visible edge, got %d", len(pkt.Edges))
+	}
+}
+
+func TestGraphParentInheritance(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	authz := openfga.NewMemory()
+	org := "org_acme_0001"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Acme"})
+
+	parent := ports.Record{ResourceID: "res_parent", OrgID: org, Kind: "case", Title: "Parent", Classification: "internal", CurrentRevID: "r1", State: "INDEXED"}
+	child := ports.Record{ResourceID: "res_child", OrgID: org, Kind: "note", Title: "Child", Classification: "internal", CurrentRevID: "r1", State: "INDEXED"}
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		_ = store.UpsertRecord(ctx, tx, parent)
+		_ = store.UpsertRecord(ctx, tx, child)
+		return store.UpsertEdge(ctx, tx, ports.GraphEdge{
+			EdgeID: "e_parent", OrgID: org, FromID: "res_child", ToID: "res_parent", Predicate: ports.EdgeParent,
+		})
+	})
+	authz.AddOrgMember(org, "alice")
+	authz.Grant("resource:res_parent", "can_read", "user:alice")
+	authz.Grant("resource:res_child", "parent", "resource:res_parent")
+
+	pipe := &retrieval.Pipeline{
+		Identity: authn.NewLocal(),
+		Authz:    authz,
+		Policy:   policy.New(),
+		Ledger:   store,
+		Index:    memory.NewIndex(),
+		Audit:    audit.NewMemory(),
+	}
+	pkt, err := pipe.Graph(ctx, retrieval.Request{
+		Credentials: ports.Credentials{BearerToken: "local:org_acme_0001:alice:employee"},
+		OrgID:       org,
+		Purpose:     "support",
+		ResourceID:  "res_parent",
+		Depth:       1,
+		Action:      "context.graph",
+	})
+	if err != nil {
+		t.Fatalf("graph: %v", err)
+	}
+	found := false
+	for _, n := range pkt.Nodes {
+		if n.ResourceID == "res_child" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("child should inherit can_read from parent AuthZ tuple")
+	}
+}

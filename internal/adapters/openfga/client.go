@@ -213,7 +213,7 @@ func formatObject(resourceID string) string {
 
 func mapRelation(action string) string {
 	switch action {
-	case "context.search", "context.get", "context.brief", "can_read", "reader":
+	case "context.search", "context.get", "context.brief", "context.graph", "can_read", "reader":
 		return "can_read"
 	case "can_manage", "context.manage", "can_admin", "can_delete", "context.delete":
 		if action == "context.delete" {

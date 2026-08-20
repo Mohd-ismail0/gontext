@@ -19,8 +19,8 @@ info:
     MCP tools `context.search`, `context.get`, `context.brief`, and
     `context.request_access` map 1:1 onto the same ApplicationService operations.
   license:
-    name: Proprietary
-    url: https://context-fabric.dev/license
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
   contact:
     name: Context Fabric
     url: https://context-fabric.dev

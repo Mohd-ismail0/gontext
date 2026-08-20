@@ -110,7 +110,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ToolDescriptors returns the four read-only MCP tools.
+// ToolDescriptors returns the read-only MCP tools.
 func ToolDescriptors() []map[string]any {
 	return []map[string]any{
 		tool("context.search", "Governed hybrid search returning a ContextPacket", map[string]any{
@@ -141,6 +141,18 @@ func ToolDescriptors() []map[string]any {
 				"max_items":       map[string]any{"type": "integer"},
 			},
 			"required": []string{"purpose"},
+		}),
+		tool("context.graph", "Visible knowledge subgraph around a seed resource (AuthZ per node)", map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"organization_id": map[string]any{"type": "string"},
+				"resource_id":     map[string]any{"type": "string"},
+				"purpose":         map[string]any{"type": "string"},
+				"depth":           map[string]any{"type": "integer"},
+				"max_nodes":       map[string]any{"type": "integer"},
+				"predicates":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required": []string{"resource_id", "purpose"},
 		}),
 		tool("context.request_access", "Request access to a resource", map[string]any{
 			"type": "object",
@@ -207,6 +219,19 @@ func (s *Server) callTool(r *http.Request, creds ports.Credentials, orgID string
 			return nil, err
 		}
 		return toolResult(pkt)
+	case "context.graph":
+		preds := strSliceArg(p.Arguments, "predicates")
+		pkt, err := s.App.Graph(ctx, creds, orgID, scopes, app.GraphRequest{
+			ResourceID: strArg(p.Arguments, "resource_id"),
+			Purpose:    strArg(p.Arguments, "purpose"),
+			Depth:      intArg(p.Arguments, "depth"),
+			MaxNodes:   intArg(p.Arguments, "max_nodes"),
+			Predicates: preds,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return toolResult(pkt)
 	case "context.request_access":
 		out, err := s.App.RequestAccess(ctx, creds, orgID, strArg(p.Arguments, "resource_id"), strArg(p.Arguments, "purpose"), strArg(p.Arguments, "justification"))
 		if err != nil {
@@ -267,6 +292,27 @@ func intArg(m map[string]any, k string) int {
 		return v
 	default:
 		return 0
+	}
+}
+
+func strSliceArg(m map[string]any, k string) []string {
+	raw, ok := m[k]
+	if !ok || raw == nil {
+		return nil
+	}
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

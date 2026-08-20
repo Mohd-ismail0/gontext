@@ -106,4 +106,19 @@ type LedgerStore interface {
 	GetDelegation(ctx context.Context, orgID, grantID string) (DelegationGrant, error)
 	RevokeDelegation(ctx context.Context, tx Tx, orgID, grantID string) error
 	ListDelegations(ctx context.Context, orgID, actorID string) ([]DelegationGrant, error)
+
+	// Knowledge-graph edges (ADR 0013). AuthZ is separate (OpenFGA).
+	UpsertEdge(ctx context.Context, tx Tx, edge GraphEdge) error
+	GetEdge(ctx context.Context, orgID, edgeID string) (GraphEdge, error)
+	ListEdges(ctx context.Context, orgID string, opts EdgeListOptions) ([]GraphEdge, error)
+	TombstoneEdge(ctx context.Context, tx Tx, orgID, edgeID string) error
+}
+
+// EdgeListOptions filters knowledge-graph edge queries.
+type EdgeListOptions struct {
+	// ResourceIDs matches edges where from_id OR to_id is in the set.
+	ResourceIDs []string
+	Predicates  []string
+	IncludeDead bool // include TOMBSTONED
+	Limit       int
 }
