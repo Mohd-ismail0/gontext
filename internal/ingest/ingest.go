@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xsama/context-fabric/internal/authzsync"
 	"github.com/xsama/context-fabric/internal/mapping"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
@@ -519,22 +520,8 @@ func (s *IntakeService) writeEdges(ctx context.Context, tx ports.Tx, orgID, seed
 		if err := s.Ledger.UpsertEdge(ctx, tx, edge); err != nil {
 			return err
 		}
-		if edge.SyncAuthz {
-			if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
-				ID:        platform.NewEventID(),
-				OrgID:     orgID,
-				Operation: "write",
-				Object:    "resource:" + e.FromID,
-				Relation:  "parent",
-				Subject:   "resource:" + e.ToID,
-				EdgeID:    edgeID,
-				Status:    "pending",
-				CreatedAt: now,
-				UpdatedAt: now,
-				NextAttempt: now,
-			}); err != nil {
-				return err
-			}
+		if err := authzsync.EnqueueForEdge(ctx, s.Ledger, tx, edge, authzsync.OperationWrite, now); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xsama/context-fabric/internal/authzsync"
 	"github.com/xsama/context-fabric/internal/changes"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
@@ -16,13 +17,13 @@ const indexConsumer = "context-index-projector"
 
 // Worker runs outbox relay, AuthZ tuple sync, and index projection consumers.
 type Worker struct {
-	Ledger     ports.LedgerStore
-	Bus        ports.EventBus
-	Index      ports.IndexProvider
-	Authz      ports.RelationshipWriter
-	ChangeFeed *changes.Service
-	Interval   time.Duration
-	Batch      int
+	Ledger           ports.LedgerStore
+	Bus              ports.EventBus
+	Index            ports.IndexProvider
+	Authz            ports.RelationshipWriter
+	ChangeFeed       *changes.Service
+	Interval         time.Duration
+	Batch            int
 	MaxAuthzAttempts int
 
 	stop chan struct{}
@@ -275,8 +276,8 @@ func (w *Worker) reconcileOnce(ctx context.Context) error {
 	inspector, _ := w.Authz.(ports.RelationshipInspector)
 	now := time.Now().UTC()
 	for _, e := range edges {
-		object := "resource:" + e.FromID
-		subject := "resource:" + e.ToID
+		object := authzsync.ResourceObject(e.FromID)
+		subject := authzsync.ResourceObject(e.ToID)
 		pending, err := w.Ledger.HasAuthzTuplePending(ctx, e.OrgID, "write", object, "parent", subject)
 		if err != nil {
 			return err
@@ -305,19 +306,7 @@ func (w *Worker) reconcileOnce(ctx context.Context) error {
 			}
 		}
 		_ = w.Ledger.WithOrgTx(ctx, e.OrgID, func(ctx context.Context, tx ports.Tx) error {
-			return w.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
-				ID:          platform.NewEventID(),
-				OrgID:       e.OrgID,
-				Operation:   "write",
-				Object:      object,
-				Relation:    "parent",
-				Subject:     subject,
-				EdgeID:      e.EdgeID,
-				Status:      "pending",
-				CreatedAt:   now,
-				UpdatedAt:   now,
-				NextAttempt: now,
-			})
+			return authzsync.EnqueueForEdge(ctx, w.Ledger, tx, e, authzsync.OperationWrite, now)
 		})
 	}
 	return nil

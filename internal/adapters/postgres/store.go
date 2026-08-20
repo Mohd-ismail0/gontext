@@ -573,7 +573,7 @@ FROM graph_edges WHERE organization_id=$1`
 			args = append(args, opts.Predicates)
 			argN++
 		}
-		q += fmt.Sprintf(` ORDER BY from_id ASC, predicate ASC, to_id ASC, created_at ASC LIMIT $%d`, argN)
+		q += fmt.Sprintf(` ORDER BY from_id ASC, predicate ASC, to_id ASC, created_at ASC, id ASC LIMIT $%d`, argN)
 		args = append(args, opts.Limit)
 
 		rows, err := tx.Query(ctx, q, args...)

@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"time"
 
@@ -12,26 +13,26 @@ import (
 
 // Store is an in-memory LedgerStore with org-keyed maps (tenant isolation).
 type Store struct {
-	mu           sync.RWMutex
-	orgs         map[string]ports.Organization
-	records      map[string]map[string]ports.Record // org -> resourceID -> record
-	revisions    map[string]map[string]ports.Revision
-	sources      map[string]map[string]ports.SourceRegistration
-	delegations  map[string]map[string]ports.DelegationGrant
-	outbox       []ports.OutboxEntry
-	outboxLease  map[string]time.Time // outbox id -> lease expiry
-	inbox        map[string]ports.InboxEntry // org|consumer|msgID
-	idempotency  map[string]ports.IdempotencyRecord // org|key
-	changes      map[string][]ports.ChangeEvent
-	audits       map[string][]ports.AuditEvent
-	quotas       map[string]ports.Quota
-	webhooks     map[string]map[string]WebhookSubscription
-	accessReqs   map[string]map[string]AccessRequest
-	exports      map[string]map[string]ExportJob
-	holds        map[string]map[string]bool // org -> resourceID -> legal hold
-	mappings     map[string]mapping.Spec    // sourceID -> Spec
-	edges        map[string]map[string]ports.GraphEdge // org -> edgeID -> edge
-	authzTuples  map[string]map[string]ports.AuthzTupleOp // org -> id -> op
+	mu          sync.RWMutex
+	orgs        map[string]ports.Organization
+	records     map[string]map[string]ports.Record // org -> resourceID -> record
+	revisions   map[string]map[string]ports.Revision
+	sources     map[string]map[string]ports.SourceRegistration
+	delegations map[string]map[string]ports.DelegationGrant
+	outbox      []ports.OutboxEntry
+	outboxLease map[string]time.Time               // outbox id -> lease expiry
+	inbox       map[string]ports.InboxEntry        // org|consumer|msgID
+	idempotency map[string]ports.IdempotencyRecord // org|key
+	changes     map[string][]ports.ChangeEvent
+	audits      map[string][]ports.AuditEvent
+	quotas      map[string]ports.Quota
+	webhooks    map[string]map[string]WebhookSubscription
+	accessReqs  map[string]map[string]AccessRequest
+	exports     map[string]map[string]ExportJob
+	holds       map[string]map[string]bool               // org -> resourceID -> legal hold
+	mappings    map[string]mapping.Spec                  // sourceID -> Spec
+	edges       map[string]map[string]ports.GraphEdge    // org -> edgeID -> edge
+	authzTuples map[string]map[string]ports.AuthzTupleOp // org -> id -> op
 }
 
 // WebhookSubscription is a test/demo webhook registration.
@@ -605,9 +606,24 @@ func (s *Store) ListEdges(_ context.Context, orgID string, opts ports.EdgeListOp
 			continue
 		}
 		out = append(out, e)
-		if len(out) >= opts.Limit {
-			break
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].FromID != out[j].FromID {
+			return out[i].FromID < out[j].FromID
 		}
+		if out[i].Predicate != out[j].Predicate {
+			return out[i].Predicate < out[j].Predicate
+		}
+		if out[i].ToID != out[j].ToID {
+			return out[i].ToID < out[j].ToID
+		}
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].EdgeID < out[j].EdgeID
+	})
+	if len(out) > opts.Limit {
+		out = out[:opts.Limit]
 	}
 	return out, nil
 }

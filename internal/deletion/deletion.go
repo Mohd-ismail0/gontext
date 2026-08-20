@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/xsama/context-fabric/internal/audit"
+	"github.com/xsama/context-fabric/internal/authzsync"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -144,22 +145,8 @@ func (s *Service) Run(ctx context.Context, req Request) (CompletionManifest, err
 			if err := s.Ledger.TombstoneEdge(ctx, tx, req.OrgID, e.EdgeID); err != nil {
 				return err
 			}
-			if e.SyncAuthz && e.Predicate == ports.EdgeParent {
-				if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
-					ID:          platform.NewEventID(),
-					OrgID:       req.OrgID,
-					Operation:   "delete",
-					Object:      "resource:" + e.FromID,
-					Relation:    "parent",
-					Subject:     "resource:" + e.ToID,
-					EdgeID:      e.EdgeID,
-					Status:      "pending",
-					CreatedAt:   nowEdge,
-					UpdatedAt:   nowEdge,
-					NextAttempt: nowEdge,
-				}); err != nil {
-					return err
-				}
+			if err := authzsync.EnqueueForEdge(ctx, s.Ledger, tx, e, authzsync.OperationDelete, nowEdge); err != nil {
+				return err
 			}
 		}
 		return nil
