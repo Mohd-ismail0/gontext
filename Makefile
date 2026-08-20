@@ -20,7 +20,8 @@ build:
 	@if [ -d ./cmd/cf ]; then CGO_ENABLED=0 go build $(GOFLAGS) -o $(CF_BIN) ./cmd/cf; fi
 
 test:
-	go test ./...
+	@mkdir -p tmp
+	go test -count=1 -o tmp/ ./...
 
 lint:
 	@if command -v golangci-lint >/dev/null 2>&1; then \

@@ -224,26 +224,64 @@ type IntakeEvent struct {
 
 // SourceRegistration describes a registered source/connector binding.
 type SourceRegistration struct {
-	SourceID     string            `json:"source_id"`
-	OrgID        string            `json:"org_id"`
-	System       string            `json:"system"`
-	DisplayName  string            `json:"display_name,omitempty"`
-	TrustTier   string            `json:"trust_tier"`
-	MappingSpec  string            `json:"mapping_spec_id,omitempty"`
-	Enabled      bool              `json:"enabled"`
-	Attributes   map[string]string `json:"attributes,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	UpdatedAt    time.Time         `json:"updated_at"`
+	SourceID               string            `json:"source_id"`
+	OrgID                  string            `json:"organization_id"`
+	System                 string            `json:"system"`
+	DisplayName            string            `json:"display_name,omitempty"`
+	TrustTier             string            `json:"trust_tier,omitempty"`
+	TrustCeiling           string            `json:"trust_ceiling,omitempty"`
+	AuthorityCeiling       string            `json:"authority_ceiling,omitempty"`
+	ClassificationCeiling  string            `json:"classification_ceiling,omitempty"`
+	ClassificationDefault  string            `json:"classification_default,omitempty"`
+	MappingSpec            string            `json:"mapping_spec_id,omitempty"`
+	Enabled                bool              `json:"enabled"`
+	SigningSecret          string            `json:"signing_secret,omitempty"`
+	ReplayWindowSeconds    int               `json:"replay_window_seconds,omitempty"`
+	AllowedRecordTypes     []string          `json:"allowed_record_types,omitempty"`
+	AllowedVisibilityRefs  []string          `json:"allowed_visibility_refs,omitempty"`
+	Attributes             map[string]string `json:"attributes,omitempty"`
+	CreatedAt              time.Time         `json:"created_at"`
+	UpdatedAt              time.Time         `json:"updated_at"`
+}
+
+// EffectiveTrustCeiling returns the trust ceiling (prefer explicit ceiling).
+func (s SourceRegistration) EffectiveTrustCeiling() string {
+	if s.TrustCeiling != "" {
+		return s.TrustCeiling
+	}
+	return s.TrustTier
+}
+
+// EffectiveClassificationCeiling returns classification ceiling or default.
+func (s SourceRegistration) EffectiveClassificationCeiling() string {
+	if s.ClassificationCeiling != "" {
+		return s.ClassificationCeiling
+	}
+	if s.ClassificationDefault != "" {
+		return s.ClassificationDefault
+	}
+	return "internal"
 }
 
 // MappingSpec transforms source payloads into canonical intake fields.
 type MappingSpec struct {
-	ID        string            `json:"id"`
-	OrgID     string            `json:"org_id"`
-	Version   string            `json:"version"`
-	SourceKind string           `json:"source_kind"`
-	Rules     map[string]string `json:"rules"`
-	CreatedAt time.Time         `json:"created_at"`
+	ID         string            `json:"id"`
+	OrgID      string            `json:"organization_id"`
+	Version    string            `json:"version"`
+	SourceKind string            `json:"source_kind"`
+	SourceID   string            `json:"source_id,omitempty"`
+	Rules      map[string]string `json:"rules"`
+	CreatedAt  time.Time         `json:"created_at"`
+}
+
+// IdempotencyRecord stores the outcome of a prior intake for UNIQUE key replay.
+type IdempotencyRecord struct {
+	OrgID          string    `json:"organization_id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	EventID        string    `json:"event_id"`
+	ResourceID     string    `json:"resource_id"`
+	RevisionID     string    `json:"revision_id"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ChangeEvent is a metadata-only change feed item.

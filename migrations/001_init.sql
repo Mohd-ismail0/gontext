@@ -364,10 +364,18 @@ BEGIN
       'CREATE POLICY tenant_isolation ON %I
          USING (organization_id = current_setting(''app.organization_id'', true))
          WITH CHECK (organization_id = current_setting(''app.organization_id'', true))', t);
-    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO context_gateway', t);
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'context_gateway') THEN
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON %I TO context_gateway', t);
+    END IF;
   END LOOP;
 END
 $$;
 
-GRANT SELECT, INSERT, UPDATE, DELETE ON organizations TO context_gateway;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO context_gateway;
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'context_gateway') THEN
+    GRANT SELECT, INSERT, UPDATE, DELETE ON organizations TO context_gateway;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO context_gateway;
+  END IF;
+END
+$$;

@@ -77,6 +77,11 @@ func (idx *Index) SearchCandidates(_ context.Context, orgID string, query string
 		score := 0.0
 		if q == "" {
 			score = 1
+		} else if rid := filters["resource_id"]; rid != "" && d.ResourceID == rid {
+			// get/brief pass resource_id as both filter and query; match by id.
+			score = 1
+		} else if strings.EqualFold(d.ResourceID, q) {
+			score = 1
 		} else if strings.Contains(strings.ToLower(d.Text), q) {
 			score = 1
 		} else {

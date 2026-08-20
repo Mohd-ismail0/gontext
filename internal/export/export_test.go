@@ -1,0 +1,81 @@
+package export_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/xsama/context-fabric/internal/adapters/memory"
+	"github.com/xsama/context-fabric/internal/export"
+	"github.com/xsama/context-fabric/internal/ports"
+)
+
+func TestExportRoundTripHashStable(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	org := "org_exp_1"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Exp"})
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		_ = store.UpsertRecord(ctx, tx, ports.Record{
+			ResourceID: "r1", OrgID: org, Kind: "document", Title: "alpha",
+			Classification: "internal", CurrentRevID: "rev1", State: "INDEXED",
+		})
+		_ = store.AppendRevision(ctx, tx, ports.Revision{
+			RevisionID: "rev1", ResourceID: "r1", OrgID: org, State: "INDEXED", ContentHash: "abc",
+		})
+		return store.UpsertSource(ctx, tx, ports.SourceRegistration{
+			SourceID: "src1", OrgID: org, System: "chatwoot", TrustTier: "verified", Enabled: true,
+			Attributes: map[string]string{"api_key": "SHOULD_NOT_EXPORT", "region": "us"},
+		})
+	})
+
+	svc := &export.Service{Ledger: store}
+	m1, err := svc.Build(ctx, org, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h1 := export.HashManifest(m1)
+	m1.Checksums = map[string]string{"manifest_sha256": h1}
+	if export.HashManifest(m1) != h1 {
+		t.Fatal("hash not stable on recompute")
+	}
+	for _, src := range m1.Sources {
+		if src.Attributes != nil {
+			if _, ok := src.Attributes["api_key"]; ok {
+				t.Fatal("secrets must not appear in export")
+			}
+		}
+	}
+
+	// Second build of same ledger must produce same content hash.
+	m2, err := svc.Build(ctx, org, "bob")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h2 := export.HashManifest(m2)
+	if h1 != h2 {
+		t.Fatalf("export hash not stable: %s vs %s", h1, h2)
+	}
+
+	target := "org_isolated_2"
+	m1.OrganizationID = target
+	for i := range m1.Records {
+		m1.Records[i].OrgID = target
+	}
+	for i := range m1.Revisions {
+		m1.Revisions[i].OrgID = target
+	}
+	for i := range m1.Sources {
+		m1.Sources[i].OrgID = target
+	}
+	m1.Checksums = map[string]string{"manifest_sha256": export.HashManifest(m1)}
+	if err := svc.ImportInto(ctx, target, m1); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetRecord(ctx, target, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "alpha" {
+		t.Fatalf("import failed: %+v", got)
+	}
+}

@@ -1,0 +1,146 @@
+package retrieval_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/xsama/context-fabric/internal/adapters/memory"
+	"github.com/xsama/context-fabric/internal/adapters/openfga"
+	"github.com/xsama/context-fabric/internal/audit"
+	"github.com/xsama/context-fabric/internal/authn"
+	"github.com/xsama/context-fabric/internal/policy"
+	"github.com/xsama/context-fabric/internal/ports"
+	"github.com/xsama/context-fabric/internal/retrieval"
+)
+
+func TestTagCannotWidenAccess(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	idx := memory.NewIndex()
+	authz := openfga.NewMemory()
+	org := "org_acme_0001"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Acme"})
+
+	// Restricted resource; free tags claim "classification:public" but system classification is restricted.
+	rec := ports.Record{
+		ResourceID:     "res_note_restricted_009",
+		OrgID:          org,
+		Kind:           "document",
+		Title:          "secret note",
+		Classification: "restricted",
+		Labels:         []string{"classification:public", "visibility:public"},
+		CurrentRevID:   "rev1",
+		State:          "INDEXED",
+	}
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		return store.UpsertRecord(ctx, tx, rec)
+	})
+	_ = idx.Upsert(ctx, []ports.IndexDocument{{
+		ResourceID: rec.ResourceID,
+		RevisionID: "rev1",
+		OrgID:      org,
+		Text:       "billing secret",
+		Labels:     []string{"classification:public", "visibility:public", "purpose:support"},
+		Attributes: map[string]string{
+			"classification":     "restricted", // system field
+			"purpose_allowlist":  "support",
+		},
+	}})
+
+	// Bob is org member but has NO can_read on the restricted resource.
+	authz.AddOrgMember(org, "bob")
+	// Do not Grant can_read for bob.
+
+	pipe := &retrieval.Pipeline{
+		Identity: authn.NewLocal(),
+		Authz:    authz,
+		Policy:   policy.New(),
+		Ledger:   store,
+		Index:    idx,
+		Audit:    audit.NewMemory(),
+		Snippets: idx,
+	}
+
+	pkt, err := pipe.Search(ctx, retrieval.Request{
+		Credentials: ports.Credentials{BearerToken: "local:org_acme_0001:bob:employee"},
+		OrgID:       org,
+		Query:       "billing",
+		Purpose:     "support",
+		Limit:       10,
+		Filters:     map[string]string{"include_tags": "classification:public"},
+		Consistency: ports.ConsistencyFullyConsistent,
+		Action:      "context.search",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(pkt.Citations) != 0 {
+		t.Fatalf("tags must not widen access; got %d citations", len(pkt.Citations))
+	}
+	if pkt.AuditID == "" {
+		t.Fatal("expected audit_id on deny/empty packet")
+	}
+}
+
+func TestSearchReturnsCitationsAndAuditID(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	idx := memory.NewIndex()
+	authz := openfga.NewMemory()
+	org := "org_acme_0001"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Acme"})
+
+	rec := ports.Record{
+		ResourceID:     "res_ok_1",
+		OrgID:          org,
+		Kind:           "document",
+		Title:          "billing guide",
+		Classification: "internal",
+		CurrentRevID:   "rev1",
+		State:          "INDEXED",
+	}
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		return store.UpsertRecord(ctx, tx, rec)
+	})
+	_ = idx.Upsert(ctx, []ports.IndexDocument{{
+		ResourceID: rec.ResourceID,
+		RevisionID: "rev1",
+		OrgID:      org,
+		Text:       "how to handle billing questions",
+		Labels:     []string{"topic:billing", "purpose:support"},
+		Attributes: map[string]string{"classification": "internal", "purpose_allowlist": "support"},
+	}})
+	authz.AddOrgMember(org, "alice")
+	authz.Grant("resource:res_ok_1", "can_read", "user:alice")
+
+	pipe := &retrieval.Pipeline{
+		Identity: authn.NewLocal(),
+		Authz:    authz,
+		Policy:   policy.New(),
+		Ledger:   store,
+		Index:    idx,
+		Audit:    audit.NewMemory(),
+		Snippets: idx,
+	}
+
+	pkt, err := pipe.Search(ctx, retrieval.Request{
+		Credentials: ports.Credentials{BearerToken: "local:org_acme_0001:alice:employee"},
+		OrgID:       org,
+		Query:       "billing",
+		Purpose:     "support",
+		Limit:       10,
+		Action:      "context.search",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(pkt.Citations) == 0 {
+		t.Fatal("expected citations")
+	}
+	if pkt.Citations[0].ResourceID != "res_ok_1" {
+		t.Fatalf("citation resource %s", pkt.Citations[0].ResourceID)
+	}
+	if pkt.AuditID == "" {
+		t.Fatal("expected audit_id")
+	}
+}

@@ -18,6 +18,30 @@ Public surface: **serve only** on port `8080` (`/health/live`, `/health/startup`
 
 Useful targets: `make build`, `make test`, `make lint`, `make migrate`, `make doctor`.
 
+## cf CLI
+
+Operator CLI (`cmd/cf`) talks to the serve HTTP API:
+
+```bash
+go build -o bin/cf ./cmd/cf
+export CONTEXT_FABRIC_URL=http://127.0.0.1:8080
+export CONTEXT_FABRIC_TOKEN=local:org1:alice:admin
+
+cf doctor
+cf tenant provision --org org1 --name Acme
+cf tenant verify --org org1
+cf agent create --org org1 --agent agent1
+cf agent rotate --org org1 --agent agent1
+cf agent revoke --org org1 --credential <credential_id>
+cf source register --org org1 --system chatwoot
+cf source verify --org org1 --source <source_id>
+cf diagnose decision --org org1 --audit-id <audit_id>
+cf ops lag --org org1
+cf ops support-bundle --org org1
+```
+
+In memory/demo mode, start serve with `CONTEXT_FABRIC_MEMORY=1` (or empty `POSTGRES_DSN` + demo profile). MCP is mounted at `POST /mcp` with the same bearer auth; OAuth protected-resource metadata is at `/.well-known/oauth-protected-resource`.
+
 ## Image roles
 
 | Role | Purpose |

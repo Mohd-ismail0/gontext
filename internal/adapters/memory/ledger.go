@@ -13,18 +13,21 @@ import (
 type Store struct {
 	mu           sync.RWMutex
 	orgs         map[string]ports.Organization
-	records      map[string]map[string]ports.Record            // org -> resourceID -> record
-	revisions    map[string]map[string]ports.Revision          // org -> revisionID -> revision
+	records      map[string]map[string]ports.Record // org -> resourceID -> record
+	revisions    map[string]map[string]ports.Revision
 	sources      map[string]map[string]ports.SourceRegistration
 	delegations  map[string]map[string]ports.DelegationGrant
 	outbox       []ports.OutboxEntry
+	outboxLease  map[string]time.Time // outbox id -> lease expiry
 	inbox        map[string]ports.InboxEntry // org|consumer|msgID
+	idempotency  map[string]ports.IdempotencyRecord // org|key
 	changes      map[string][]ports.ChangeEvent
 	audits       map[string][]ports.AuditEvent
 	quotas       map[string]ports.Quota
 	webhooks     map[string]map[string]WebhookSubscription
 	accessReqs   map[string]map[string]AccessRequest
 	exports      map[string]map[string]ExportJob
+	holds        map[string]map[string]bool // org -> resourceID -> legal hold
 }
 
 // WebhookSubscription is a test/demo webhook registration.
@@ -54,6 +57,7 @@ type ExportJob struct {
 	OrgID     string
 	Status    string
 	CreatedAt time.Time
+	Manifest  any
 }
 
 // NewStore creates an empty in-memory ledger.
@@ -64,13 +68,16 @@ func NewStore() *Store {
 		revisions:   make(map[string]map[string]ports.Revision),
 		sources:     make(map[string]map[string]ports.SourceRegistration),
 		delegations: make(map[string]map[string]ports.DelegationGrant),
+		outboxLease: make(map[string]time.Time),
 		inbox:       make(map[string]ports.InboxEntry),
+		idempotency: make(map[string]ports.IdempotencyRecord),
 		changes:     make(map[string][]ports.ChangeEvent),
 		audits:      make(map[string][]ports.AuditEvent),
 		quotas:      make(map[string]ports.Quota),
 		webhooks:    make(map[string]map[string]WebhookSubscription),
 		accessReqs:  make(map[string]map[string]AccessRequest),
 		exports:     make(map[string]map[string]ExportJob),
+		holds:       make(map[string]map[string]bool),
 	}
 }
 
@@ -240,16 +247,51 @@ func (s *Store) ClaimOutbox(_ context.Context, limit int) ([]ports.OutboxEntry, 
 	if limit <= 0 {
 		limit = 10
 	}
+	now := time.Now().UTC()
+	leaseUntil := now.Add(30 * time.Second)
 	var out []ports.OutboxEntry
 	for _, e := range s.outbox {
-		if e.Published == nil {
-			out = append(out, e)
-			if len(out) >= limit {
-				break
-			}
+		if e.Published != nil {
+			continue
+		}
+		if until, ok := s.outboxLease[e.ID]; ok && until.After(now) {
+			continue
+		}
+		s.outboxLease[e.ID] = leaseUntil
+		if e.Headers == nil {
+			e.Headers = map[string]string{}
+		}
+		e.Headers["leased_at"] = now.Format(time.RFC3339Nano)
+		out = append(out, e)
+		if len(out) >= limit {
+			break
 		}
 	}
 	return out, nil
+}
+
+func (s *Store) GetIdempotency(_ context.Context, orgID, key string) (ports.IdempotencyRecord, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rec, ok := s.idempotency[orgID+"|"+key]
+	if !ok {
+		return ports.IdempotencyRecord{}, platform.ErrNotFound("idempotency key not found")
+	}
+	return rec, nil
+}
+
+func (s *Store) PutIdempotency(_ context.Context, _ ports.Tx, rec ports.IdempotencyRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := rec.OrgID + "|" + rec.IdempotencyKey
+	if _, exists := s.idempotency[key]; exists {
+		return platform.ErrConflict("idempotency key exists")
+	}
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = time.Now().UTC()
+	}
+	s.idempotency[key] = rec
+	return nil
 }
 
 func (s *Store) MarkOutboxPublished(_ context.Context, ids []string, at time.Time) error {
@@ -258,6 +300,7 @@ func (s *Store) MarkOutboxPublished(_ context.Context, ids []string, at time.Tim
 	set := map[string]struct{}{}
 	for _, id := range ids {
 		set[id] = struct{}{}
+		delete(s.outboxLease, id)
 	}
 	for i := range s.outbox {
 		if _, ok := set[s.outbox[i].ID]; ok {

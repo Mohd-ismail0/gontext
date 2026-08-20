@@ -1,0 +1,36 @@
+{
+  "api_version": "context-fabric.mapping/v1",
+  "id": "map_chatwoot_messages",
+  "revision": "1",
+  "organization_id": "org_example",
+  "source_id": "chatwoot",
+  "status": "active",
+  "description": "Sample MappingSpec for Chatwoot message webhooks.",
+  "mappings": {
+    "source_external_id": { "expr": "$.data.source_external_id" },
+    "source_revision": { "expr": "$.data.source_revision" },
+    "context_space_id": { "expr": "\"cs-support\"" },
+    "resource_id": { "expr": "$.data.resource_id" },
+    "resource_type": { "expr": "$.data.resource_type", "default": "message" },
+    "timestamps": {
+      "occurred_at": { "expr": "$.data.occurred_at" },
+      "observed_at": { "expr": "$.data.observed_at" }
+    },
+    "content_locator": { "expr": "$.data.content_locator" },
+    "classification": { "expr": "$.data.classification", "default": "internal" },
+    "trust": { "expr": "$.data.trust", "default": "untrusted_external" },
+    "source_authority": { "expr": "$.data.source_authority", "default": "corroborating" },
+    "visibility_ref": { "expr": "$.data.visibility_ref" },
+    "title": { "expr": "$.data.title" },
+    "controlled_taxonomy": {
+      "channel": { "expr": "\"chatwoot\"" },
+      "domain": { "expr": "\"support\"" }
+    }
+  },
+  "constraints": {
+    "cannot_mint_organization": true,
+    "cannot_broaden_acl": true,
+    "authority_ceiling_from_source": true,
+    "client_fields_may_only_narrow": true
+  }
+}

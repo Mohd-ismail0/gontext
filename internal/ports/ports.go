@@ -86,11 +86,15 @@ type LedgerStore interface {
 	ListRevisions(ctx context.Context, orgID, resourceID string, limit int) ([]Revision, error)
 
 	EnqueueOutbox(ctx context.Context, tx Tx, entry OutboxEntry) error
+	// ClaimOutbox leases unpublished outbox rows for relay (at-least-once).
 	ClaimOutbox(ctx context.Context, limit int) ([]OutboxEntry, error)
 	MarkOutboxPublished(ctx context.Context, ids []string, at time.Time) error
 
 	PutInbox(ctx context.Context, entry InboxEntry) error
 	HasInbox(ctx context.Context, orgID, consumer, msgID string) (bool, error)
+
+	GetIdempotency(ctx context.Context, orgID, key string) (IdempotencyRecord, error)
+	PutIdempotency(ctx context.Context, tx Tx, rec IdempotencyRecord) error
 
 	UpsertSource(ctx context.Context, tx Tx, src SourceRegistration) error
 	GetSource(ctx context.Context, orgID, sourceID string) (SourceRegistration, error)
