@@ -1,0 +1,162 @@
+## Context Fabric Helm values (scaled profile defaults: external dependencies).
+## Set *.connectionMode to bundled to enable in-cluster dependency charts/resources.
+
+profile: scaled
+
+image:
+  repository: ghcr.io/xsama/context-fabric
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+  digest: ""
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+config:
+  listenAddr: ":8080"
+  logLevel: info
+  openfgaModelId: scaled-model-v1
+  capabilities:
+    pgvector: true
+    jetstream_persistence: true
+    s3_versioning: true
+    s3_object_lock: true
+    openfga_store: true
+
+serve:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  probes:
+    startup:
+      path: /health/startup
+      failureThreshold: 30
+      periodSeconds: 5
+    liveness:
+      path: /health/live
+      periodSeconds: 10
+      failureThreshold: 3
+    readiness:
+      path: /health/ready
+      periodSeconds: 5
+      failureThreshold: 3
+
+worker:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+
+migrate:
+  enabled: true
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+
+bootstrap:
+  enabled: true
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+
+dependencies:
+  postgres:
+    connectionMode: external
+    host: postgres.context-fabric.svc.cluster.local
+    port: 5432
+    database: context_fabric
+    sslMode: verify-full
+    existingSecret: context-fabric-postgres
+    gatewayUserKey: gateway-username
+    gatewayPasswordKey: gateway-password
+    adminPasswordKey: admin-password
+    bundled:
+      enabled: false
+      image: pgvector/pgvector:pg16
+      storage: 20Gi
+  s3:
+    connectionMode: external
+    endpoint: https://s3.amazonaws.com
+    region: us-east-1
+    pathStyle: false
+    buckets:
+      raw: context-fabric-raw
+      derived: context-fabric-derived
+      quarantine: context-fabric-quarantine
+    existingSecret: context-fabric-s3
+    accessKeyKey: access-key-id
+    secretKeyKey: secret-access-key
+    bundled:
+      enabled: false
+  nats:
+    connectionMode: external
+    url: nats://nats.context-fabric.svc.cluster.local:4222
+    domain: context-fabric-scaled
+    existingSecret: context-fabric-nats
+    credentialsKey: credentials
+    bundled:
+      enabled: false
+  openfga:
+    connectionMode: external
+    apiUrl: https://openfga.context-fabric.svc.cluster.local:8080
+    existingSecret: context-fabric-openfga
+    apiTokenKey: api-token
+    storeIdKey: store-id
+    bundled:
+      enabled: false
+  oidc:
+    connectionMode: external
+    issuer: https://login.example.com/
+    audience: https://context-fabric.example.com
+    clientId: context-fabric-scaled
+    discoveryUrl: https://login.example.com/.well-known/openid-configuration
+    jwksUrl: https://login.example.com/oauth2/v1/keys
+    existingSecret: context-fabric-oidc
+    clientSecretKey: client-secret
+
+network:
+  publicSurface:
+    - serve
+  privateDependencies: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

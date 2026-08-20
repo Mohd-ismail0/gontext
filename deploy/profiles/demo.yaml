@@ -1,0 +1,154 @@
+apiVersion: context-fabric.io/v1
+kind: DeploymentConfig
+metadata:
+  name: context-fabric-demo
+  version: 1.0.0
+  description: Non-production one-command demo with fully bundled dependencies and synthetic OIDC.
+profile: demo
+roles:
+  - all
+  - migrate
+  - bootstrap
+  - doctor
+image:
+  repository: ghcr.io/xsama/context-fabric
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+network:
+  public_surface:
+    - serve
+  private_dependencies: true
+  serve_listen_addr: ":8080"
+  serve_public_port: 8080
+dependencies:
+  postgres:
+    connection_mode: bundled
+    endpoint:
+      host: postgres
+      port: 5432
+      scheme: postgres
+    tls:
+      enabled: false
+      verify: false
+    database: context_fabric
+    role_secret_ref: postgres.context_gateway
+    admin_secret_ref: postgres.admin
+    min_version: "16"
+    required_capabilities:
+      - pgvector
+      - rls
+      - force_rls
+    backup_owner: platform
+    failure_behavior: fail_closed
+  s3:
+    connection_mode: bundled
+    endpoint:
+      host: minio
+      port: 9000
+      scheme: http
+    tls:
+      enabled: false
+      verify: false
+    region: us-east-1
+    path_style: true
+    buckets:
+      raw: context-raw
+      derived: context-derived
+      quarantine: context-quarantine
+    credentials_secret_ref: s3.access
+    min_version: "RELEASE.2024-01-01T00-00-00Z"
+    required_capabilities:
+      - s3_versioning
+      - s3_object_lock
+      - presigned_put
+    backup_owner: platform
+    failure_behavior: fail_closed
+  nats:
+    connection_mode: bundled
+    endpoint:
+      host: nats
+      port: 4222
+      scheme: nats
+    tls:
+      enabled: false
+      verify: false
+    jetstream:
+      domain: context-fabric-demo
+      storage: file
+      replicas: 1
+    credentials_secret_ref: nats.credentials
+    min_version: "2.10.0"
+    required_capabilities:
+      - jetstream_persistence
+      - durable_consumers
+      - msg_id
+    backup_owner: platform
+    failure_behavior: rebuild_from_outbox
+  openfga:
+    connection_mode: bundled
+    endpoint:
+      host: openfga
+      port: 8080
+      scheme: http
+    tls:
+      enabled: false
+      verify: false
+    store_id_secret_ref: openfga.store_id
+    api_token_secret_ref: openfga.api_token
+    model_id: demo-model-v1
+    min_version: "1.5.0"
+    required_capabilities:
+      - openfga_store
+      - higher_consistency
+      - batch_check
+    backup_owner: platform
+    failure_behavior: fail_closed
+  oidc:
+    connection_mode: bundled
+    issuer: http://oidc:8080/
+    audience: context-fabric
+    discovery_url: http://oidc:8080/.well-known/openid-configuration
+    jwks_url: http://oidc:8080/jwks
+    tls:
+      enabled: false
+      verify: false
+    client_id: context-fabric-demo
+    client_secret_ref: oidc.client_secret
+    claim_mapping:
+      subject: sub
+      email: email
+      groups: groups
+      organization: org_id
+    min_version: "1.0"
+    required_capabilities:
+      - discovery
+      - jwks
+      - issuer_audience
+    backup_owner: platform
+    failure_behavior: fail_closed
+capabilities:
+  pgvector: true
+  jetstream_persistence: true
+  s3_versioning: true
+  s3_object_lock: true
+  openfga_store: true
+persistence:
+  ledger: postgres
+  evidence: s3
+  jetstream: rebuild_from_outbox
+  openfga: store_and_tuples
+backup:
+  owner: platform
+  components:
+    - postgres
+    - s3_manifests
+    - openfga_model_tuples
+    - schemas
+    - config
+    - secret_refs
+  rpo_minutes: 60
+  rto_minutes: 30
+migration:
+  compatibility: N-1
+  auto_migrate_on_start: false
+secrets_ref: deploy/schema/secrets.schema.json

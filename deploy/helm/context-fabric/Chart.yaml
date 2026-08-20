@@ -1,0 +1,17 @@
+apiVersion: v2
+name: context-fabric
+description: Context Fabric — governed organizational context plane (one image, role topology)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+home: https://github.com/xsama/context-fabric
+sources:
+  - https://github.com/xsama/context-fabric
+keywords:
+  - context-fabric
+  - openfga
+  - nats
+  - postgres
+maintainers:
+  - name: xsama
+    email: platform@xsama.example

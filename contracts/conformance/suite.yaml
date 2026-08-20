@@ -1,0 +1,213 @@
+# Context Fabric integration conformance suite (v1)
+# Language-neutral cases for REST/MCP/SDK runners.
+# Fixtures under contracts/authorization-fixtures and contracts/jsonschema are normative inputs.
+
+api_version: context-fabric.conformance/v1
+suite_id: context-fabric-v1
+description: >
+  Named conformance cases proving intake parity, webhook retry safety,
+  export round-trip, MCP/REST parity, and MappingSpec ACL non-broadening.
+
+defaults:
+  organization_id: org_acme_0001
+  purpose: support
+  oauth_scopes_ceiling:
+    - context:search
+    - context:read
+    - context:ingest
+    - context:request_access
+    - context:audit_read
+    - context:manage_policy
+
+cases:
+  - id: intake-parity-single-and-batch
+    name: Intake parity (single vs batch CloudEvents)
+    category: intake
+    description: >
+      The same logical source event accepted via POST .../context/intake and
+      POST .../context/intake:batch must yield identical canonical revision,
+      evidence hash, and idempotent outcome on retry.
+    steps:
+      - register_source:
+          fixture: ../jsonschema/source-registration.json
+          signing: hmac_sha256
+      - bind_mapping_spec:
+          fixture: ../jsonschema/mapping-spec.json
+          status: active
+      - presign_and_upload_evidence:
+          content_hash_alg: sha256
+      - ingest_single:
+          envelope_schema: ../jsonschema/event-envelope.json
+          event_id: evt_parity_001
+      - ingest_batch:
+          events:
+            - event_id: evt_parity_001
+          expect: idempotent_replay
+      - assert_canonical:
+          unique_key: [source_system, source_external_id, source_revision]
+          content_hash_match: true
+          lifecycle_state_in: [ACCEPTED, PROJECTING, INDEXED]
+    expect:
+      pass: true
+      reason_codes_forbidden:
+        - INTAKE_SCHEMA_GUESS
+        - INTAKE_ACL_BROADENED
+
+  - id: webhook-retry-idempotent
+    name: Webhook retry and out-of-order delivery
+    category: changes
+    description: >
+      Signed webhook deliveries may retry and arrive out of order. Receivers
+      must be idempotent on event_id; public payloads remain metadata-only.
+    steps:
+      - create_webhook_subscription:
+          signing: hmac_sha256
+          verify_challenge: true
+      - emit_change_events:
+          schema: ../jsonschema/change-event.json
+          events:
+            - event_id: chg_001
+              cursor: "10"
+              change_type: resource.accepted
+            - event_id: chg_002
+              cursor: "20"
+              change_type: resource.indexed
+      - deliver:
+          order: [chg_002, chg_001, chg_001]
+          include_duplicates: true
+      - inspect_deliveries:
+          expect_statuses: [delivered, duplicate_ignored]
+      - replay_delivery:
+          event_id: chg_001
+          expect: idempotent
+      - assert_payload_constraints:
+          forbidden_fields:
+            - content
+            - vector
+            - embedding
+            - prompt
+            - authorization_tuples
+    expect:
+      pass: true
+      exponential_retry: true
+      dlq_inspectable: true
+
+  - id: export-round-trip
+    name: Organization export round-trip
+    category: portability
+    description: >
+      Export an organization slice, verify checksums, import into a clean
+      sandbox, and prove search/get/brief parity for authorized principals.
+      Secrets must be absent from the archive.
+    steps:
+      - create_export_job:
+          scope:
+            include_evidence: true
+            include_derived: false
+            include_audit: true
+      - wait_export_status:
+          terminal: completed
+      - validate_manifest:
+          schema: ../jsonschema/export-manifest.json
+          legal_hold_respected: true
+      - assert_no_secrets_in_archive: true
+      - import_to_sandbox:
+          replay_tombstones_before_serve: true
+      - compare_retrieval:
+          principals:
+            - user:dave
+            - agent:support-assist
+          actions: [context.search, context.get, context.brief]
+          packet_fields:
+            - citations
+            - redactions
+            - policy_revision
+            - authz_revision
+            - audit_id
+    expect:
+      pass: true
+      content_hash_parity: true
+
+  - id: mcp-rest-parity
+    name: MCP and REST parity
+    category: retrieval
+    description: >
+      context.search, context.get, context.brief, and context.request_access
+      via MCP must invoke the same ApplicationService path as REST and produce
+      equivalent ContextPacket / access-request outcomes for the same principal,
+      purpose, and resource selector.
+    steps:
+      - authenticate:
+          audience_bound: true
+          protected_resource_metadata: /.well-known/oauth-protected-resource
+      - invoke_rest:
+          operations:
+            - POST /v1/organizations/{orgId}/context:search
+            - GET /v1/organizations/{orgId}/context/resources/{resourceId}
+            - POST /v1/organizations/{orgId}/context:brief
+            - POST /v1/organizations/{orgId}/context/access-requests
+      - invoke_mcp:
+          tools:
+            - context.search
+            - context.get
+            - context.brief
+            - context.request_access
+      - compare_outcomes:
+          ignore_fields: [audit_id, trace_id, responded_at]
+          require_equal:
+            - citations
+            - redactions
+            - policy_revision
+            - authz_revision
+            - action_restrictions
+            - decision
+      - assert_forbidden_surfaces:
+          - arbitrary_sql
+          - vector_predicate
+          - admin_tuple
+          - generic_proxy
+    expect:
+      pass: true
+      token_passthrough: false
+
+  - id: mapping-spec-cannot-broaden-acl
+    name: MappingSpec cannot broaden ACL
+    category: mapping
+    description: >
+      A MappingSpec that attempts to mint an organization, invent a visibility
+      ref outside the source registration allowlist, or raise source_authority
+      above the source ceiling must be rejected at review/dry-run/intake.
+    steps:
+      - register_source:
+          authority_ceiling: corroborating
+          visibility_mapping_policy:
+            mode: mapped_enum
+            allowed_visibility_refs:
+              - resource:res_case_sup_412#reader
+      - submit_mapping_spec:
+          malicious:
+            organization_id_expr: "constant:org_other_0002"
+            visibility_ref: resource:res_other_org_001#reader
+            source_authority: source_of_truth
+      - dry_run:
+          expect_reject: true
+          reason_codes:
+            - MAPPING_CANNOT_MINT_ORGANIZATION
+            - MAPPING_CANNOT_BROADEN_ACL
+            - MAPPING_AUTHORITY_ABOVE_SOURCE_CEILING
+      - activate_attempt:
+          expect_http_status: 422
+      - intake_with_embedded_acl_claim:
+          expect_reject: true
+          quarantine: true
+    expect:
+      pass: true
+      authorization_fixtures:
+        - ../authorization-fixtures/tag-downgrade-deny.json
+        - ../authorization-fixtures/cross-org-deny.json
+
+runners:
+  - id: go-conformance
+    entrypoint: cf conformance run --suite contracts/conformance/suite.yaml
+  - id: integrator-sandbox
+    entrypoint: cf sandbox conformance --suite contracts/conformance/suite.yaml

@@ -1,0 +1,451 @@
+package memory
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/xsama/context-fabric/internal/platform"
+	"github.com/xsama/context-fabric/internal/ports"
+)
+
+// Store is an in-memory LedgerStore with org-keyed maps (tenant isolation).
+type Store struct {
+	mu           sync.RWMutex
+	orgs         map[string]ports.Organization
+	records      map[string]map[string]ports.Record            // org -> resourceID -> record
+	revisions    map[string]map[string]ports.Revision          // org -> revisionID -> revision
+	sources      map[string]map[string]ports.SourceRegistration
+	delegations  map[string]map[string]ports.DelegationGrant
+	outbox       []ports.OutboxEntry
+	inbox        map[string]ports.InboxEntry // org|consumer|msgID
+	changes      map[string][]ports.ChangeEvent
+	audits       map[string][]ports.AuditEvent
+	quotas       map[string]ports.Quota
+	webhooks     map[string]map[string]WebhookSubscription
+	accessReqs   map[string]map[string]AccessRequest
+	exports      map[string]map[string]ExportJob
+}
+
+// WebhookSubscription is a test/demo webhook registration.
+type WebhookSubscription struct {
+	ID        string
+	OrgID     string
+	TargetURL string
+	Events    []string
+	Enabled   bool
+	CreatedAt time.Time
+}
+
+// AccessRequest tracks a pending access request.
+type AccessRequest struct {
+	RequestID   string
+	OrgID       string
+	ResourceID  string
+	Purpose     string
+	Status      string
+	CreatedAt   time.Time
+	AuditID     string
+}
+
+// ExportJob tracks an export.
+type ExportJob struct {
+	JobID     string
+	OrgID     string
+	Status    string
+	CreatedAt time.Time
+}
+
+// NewStore creates an empty in-memory ledger.
+func NewStore() *Store {
+	return &Store{
+		orgs:        make(map[string]ports.Organization),
+		records:     make(map[string]map[string]ports.Record),
+		revisions:   make(map[string]map[string]ports.Revision),
+		sources:     make(map[string]map[string]ports.SourceRegistration),
+		delegations: make(map[string]map[string]ports.DelegationGrant),
+		inbox:       make(map[string]ports.InboxEntry),
+		changes:     make(map[string][]ports.ChangeEvent),
+		audits:      make(map[string][]ports.AuditEvent),
+		quotas:      make(map[string]ports.Quota),
+		webhooks:    make(map[string]map[string]WebhookSubscription),
+		accessReqs:  make(map[string]map[string]AccessRequest),
+		exports:     make(map[string]map[string]ExportJob),
+	}
+}
+
+var _ ports.LedgerStore = (*Store)(nil)
+
+type memTx struct{ committed, rolled bool }
+
+func (t *memTx) Commit(context.Context) error   { t.committed = true; return nil }
+func (t *memTx) Rollback(context.Context) error { t.rolled = true; return nil }
+
+// WithOrgTx runs fn with a no-op transaction (tenant isolation via map keys).
+func (s *Store) WithOrgTx(ctx context.Context, orgID string, fn func(ctx context.Context, tx ports.Tx) error) error {
+	if orgID == "" {
+		return platform.ErrValidation("organization_id required")
+	}
+	tx := &memTx{}
+	if err := fn(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// WithTenant mirrors the postgres helper for shared call sites.
+func (s *Store) WithTenant(ctx context.Context, orgID string, fn func(ctx context.Context) error) error {
+	return s.WithOrgTx(ctx, orgID, func(ctx context.Context, _ ports.Tx) error {
+		return fn(ctx)
+	})
+}
+
+func (s *Store) CreateOrganization(_ context.Context, org ports.Organization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.orgs[org.ID]; ok {
+		return platform.ErrConflict("organization exists")
+	}
+	if org.CreatedAt.IsZero() {
+		org.CreatedAt = time.Now().UTC()
+	}
+	s.orgs[org.ID] = org
+	return nil
+}
+
+func (s *Store) GetOrganization(_ context.Context, orgID string) (ports.Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	o, ok := s.orgs[orgID]
+	if !ok {
+		return ports.Organization{}, platform.ErrNotFound("organization not found")
+	}
+	return o, nil
+}
+
+func (s *Store) UpsertRecord(_ context.Context, _ ports.Tx, rec ports.Record) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if rec.OrgID == "" || rec.ResourceID == "" {
+		return platform.ErrValidation("org and resource required")
+	}
+	m := s.records[rec.OrgID]
+	if m == nil {
+		m = make(map[string]ports.Record)
+		s.records[rec.OrgID] = m
+	}
+	now := time.Now().UTC()
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = now
+	}
+	rec.UpdatedAt = now
+	m[rec.ResourceID] = rec
+	return nil
+}
+
+func (s *Store) GetRecord(_ context.Context, orgID, resourceID string) (ports.Record, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m := s.records[orgID]
+	if m == nil {
+		return ports.Record{}, platform.ErrNotFound("record not found")
+	}
+	r, ok := m[resourceID]
+	if !ok {
+		return ports.Record{}, platform.ErrNotFound("record not found")
+	}
+	return r, nil
+}
+
+func (s *Store) ListRecords(_ context.Context, orgID string, limit int, _ string) ([]ports.Record, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]ports.Record, 0, limit)
+	for _, r := range s.records[orgID] {
+		out = append(out, r)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, "", nil
+}
+
+func (s *Store) AppendRevision(_ context.Context, _ ports.Tx, rev ports.Revision) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.revisions[rev.OrgID]
+	if m == nil {
+		m = make(map[string]ports.Revision)
+		s.revisions[rev.OrgID] = m
+	}
+	if rev.CreatedAt.IsZero() {
+		rev.CreatedAt = time.Now().UTC()
+	}
+	m[rev.RevisionID] = rev
+	return nil
+}
+
+func (s *Store) GetRevision(_ context.Context, orgID, revisionID string) (ports.Revision, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m := s.revisions[orgID]
+	if m == nil {
+		return ports.Revision{}, platform.ErrNotFound("revision not found")
+	}
+	r, ok := m[revisionID]
+	if !ok {
+		return ports.Revision{}, platform.ErrNotFound("revision not found")
+	}
+	return r, nil
+}
+
+func (s *Store) ListRevisions(_ context.Context, orgID, resourceID string, limit int) ([]ports.Revision, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]ports.Revision, 0)
+	for _, r := range s.revisions[orgID] {
+		if r.ResourceID == resourceID {
+			out = append(out, r)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) EnqueueOutbox(_ context.Context, _ ports.Tx, entry ports.OutboxEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry.ID == "" {
+		entry.ID = platform.NewEventID()
+	}
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	}
+	s.outbox = append(s.outbox, entry)
+	return nil
+}
+
+func (s *Store) ClaimOutbox(_ context.Context, limit int) ([]ports.OutboxEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 10
+	}
+	var out []ports.OutboxEntry
+	for _, e := range s.outbox {
+		if e.Published == nil {
+			out = append(out, e)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) MarkOutboxPublished(_ context.Context, ids []string, at time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	set := map[string]struct{}{}
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	for i := range s.outbox {
+		if _, ok := set[s.outbox[i].ID]; ok {
+			t := at
+			s.outbox[i].Published = &t
+		}
+	}
+	return nil
+}
+
+func (s *Store) PutInbox(_ context.Context, entry ports.InboxEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := entry.OrgID + "|" + entry.Consumer + "|" + entry.MsgID
+	s.inbox[key] = entry
+	return nil
+}
+
+func (s *Store) HasInbox(_ context.Context, orgID, consumer, msgID string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.inbox[orgID+"|"+consumer+"|"+msgID]
+	return ok, nil
+}
+
+func (s *Store) UpsertSource(_ context.Context, _ ports.Tx, src ports.SourceRegistration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.sources[src.OrgID]
+	if m == nil {
+		m = make(map[string]ports.SourceRegistration)
+		s.sources[src.OrgID] = m
+	}
+	now := time.Now().UTC()
+	if src.CreatedAt.IsZero() {
+		src.CreatedAt = now
+	}
+	src.UpdatedAt = now
+	m[src.SourceID] = src
+	return nil
+}
+
+func (s *Store) GetSource(_ context.Context, orgID, sourceID string) (ports.SourceRegistration, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m := s.sources[orgID]
+	if m == nil {
+		return ports.SourceRegistration{}, platform.ErrNotFound("source not found")
+	}
+	src, ok := m[sourceID]
+	if !ok {
+		return ports.SourceRegistration{}, platform.ErrNotFound("source not found")
+	}
+	return src, nil
+}
+
+func (s *Store) ListSources(_ context.Context, orgID string) ([]ports.SourceRegistration, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]ports.SourceRegistration, 0, len(s.sources[orgID]))
+	for _, src := range s.sources[orgID] {
+		out = append(out, src)
+	}
+	return out, nil
+}
+
+func (s *Store) CreateDelegation(_ context.Context, _ ports.Tx, grant ports.DelegationGrant) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.delegations[grant.OrgID]
+	if m == nil {
+		m = make(map[string]ports.DelegationGrant)
+		s.delegations[grant.OrgID] = m
+	}
+	if grant.CreatedAt.IsZero() {
+		grant.CreatedAt = time.Now().UTC()
+	}
+	m[grant.ID] = grant
+	return nil
+}
+
+func (s *Store) GetDelegation(_ context.Context, orgID, grantID string) (ports.DelegationGrant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	m := s.delegations[orgID]
+	if m == nil {
+		return ports.DelegationGrant{}, platform.ErrNotFound("delegation not found")
+	}
+	g, ok := m[grantID]
+	if !ok {
+		return ports.DelegationGrant{}, platform.ErrNotFound("delegation not found")
+	}
+	return g, nil
+}
+
+func (s *Store) RevokeDelegation(_ context.Context, _ ports.Tx, orgID, grantID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m := s.delegations[orgID]
+	if m == nil {
+		return platform.ErrNotFound("delegation not found")
+	}
+	g, ok := m[grantID]
+	if !ok {
+		return platform.ErrNotFound("delegation not found")
+	}
+	g.Revoked = true
+	m[grantID] = g
+	return nil
+}
+
+func (s *Store) ListDelegations(_ context.Context, orgID, actorID string) ([]ports.DelegationGrant, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]ports.DelegationGrant, 0)
+	for _, g := range s.delegations[orgID] {
+		if actorID == "" || g.ActorID == actorID {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+// AppendAudit implements audit.LedgerWriter.
+func (s *Store) AppendAudit(_ context.Context, event ports.AuditEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.audits[event.OrgID] = append(s.audits[event.OrgID], event)
+	return nil
+}
+
+// ListAudit returns org-scoped audit events.
+func (s *Store) ListAudit(_ context.Context, orgID string, limit int) ([]ports.AuditEvent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ev := s.audits[orgID]
+	if limit <= 0 || limit > len(ev) {
+		limit = len(ev)
+	}
+	out := make([]ports.AuditEvent, limit)
+	copy(out, ev[len(ev)-limit:])
+	return out, nil
+}
+
+// AppendChange stores a change feed item.
+func (s *Store) AppendChange(_ context.Context, ev ports.ChangeEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.changes[ev.OrgID] = append(s.changes[ev.OrgID], ev)
+	return nil
+}
+
+// ListChanges returns change events after cursor.
+func (s *Store) ListChanges(_ context.Context, orgID, cursor string, limit int) ([]ports.ChangeEvent, string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	all := s.changes[orgID]
+	out := make([]ports.ChangeEvent, 0, limit)
+	next := cursor
+	for _, ev := range all {
+		if cursor != "" && ev.Cursor <= cursor {
+			continue
+		}
+		out = append(out, ev)
+		next = ev.Cursor
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, next, nil
+}
+
+func (s *Store) GetQuotas(_ context.Context, orgID string) (ports.Quota, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	q, ok := s.quotas[orgID]
+	if !ok {
+		return ports.Quota{SearchPerMinute: 60, IntakePerMinute: 120, ExportPerMinute: 10, MaxResults: 25}, nil
+	}
+	return q, nil
+}
+
+func (s *Store) SetQuotas(_ context.Context, orgID string, q ports.Quota) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.quotas[orgID] = q
+	return nil
+}

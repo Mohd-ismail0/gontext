@@ -1,0 +1,116 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "context-fabric.fullname" . }}-config
+  labels:
+    {{- include "context-fabric.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    apiVersion: context-fabric.io/v1
+    kind: DeploymentConfig
+    metadata:
+      name: {{ include "context-fabric.fullname" . }}
+      version: {{ .Chart.AppVersion | quote }}
+    profile: {{ .Values.profile | quote }}
+    roles:
+      - serve
+      - worker
+      - migrate
+      - bootstrap
+    network:
+      public_surface:
+        {{- toYaml .Values.network.publicSurface | nindent 8 }}
+      private_dependencies: {{ .Values.network.privateDependencies }}
+      serve_listen_addr: {{ .Values.config.listenAddr | quote }}
+    dependencies:
+      postgres:
+        connection_mode: {{ .Values.dependencies.postgres.connectionMode | quote }}
+        endpoint:
+          host: {{ .Values.dependencies.postgres.host | quote }}
+          port: {{ .Values.dependencies.postgres.port }}
+          scheme: postgres
+        tls:
+          enabled: {{ ne .Values.dependencies.postgres.sslMode "disable" }}
+          verify: {{ ne .Values.dependencies.postgres.sslMode "disable" }}
+        database: {{ .Values.dependencies.postgres.database | quote }}
+        role_secret_ref: postgres.context_gateway
+        min_version: "16"
+        required_capabilities: ["pgvector", "rls", "force_rls"]
+      s3:
+        connection_mode: {{ .Values.dependencies.s3.connectionMode | quote }}
+        endpoint:
+          host: {{ .Values.dependencies.s3.endpoint | quote }}
+          port: 443
+          scheme: https
+        tls:
+          enabled: true
+          verify: true
+        region: {{ .Values.dependencies.s3.region | quote }}
+        path_style: {{ .Values.dependencies.s3.pathStyle }}
+        buckets:
+          raw: {{ .Values.dependencies.s3.buckets.raw | quote }}
+          derived: {{ .Values.dependencies.s3.buckets.derived | quote }}
+          quarantine: {{ .Values.dependencies.s3.buckets.quarantine | quote }}
+        credentials_secret_ref: s3.access
+        min_version: "2006-03-01"
+        required_capabilities: ["s3_versioning", "s3_object_lock", "presigned_put"]
+      nats:
+        connection_mode: {{ .Values.dependencies.nats.connectionMode | quote }}
+        endpoint:
+          host: {{ .Values.dependencies.nats.url | quote }}
+          port: 4222
+          scheme: nats
+        tls:
+          enabled: true
+          verify: true
+        jetstream:
+          domain: {{ .Values.dependencies.nats.domain | quote }}
+          storage: file
+          replicas: 3
+        credentials_secret_ref: nats.credentials
+        min_version: "2.10.0"
+        required_capabilities: ["jetstream_persistence", "durable_consumers", "msg_id"]
+      openfga:
+        connection_mode: {{ .Values.dependencies.openfga.connectionMode | quote }}
+        endpoint:
+          host: {{ .Values.dependencies.openfga.apiUrl | quote }}
+          port: 8080
+          scheme: https
+        tls:
+          enabled: true
+          verify: true
+        store_id_secret_ref: openfga.store_id
+        api_token_secret_ref: openfga.api_token
+        model_id: {{ .Values.config.openfgaModelId | quote }}
+        min_version: "1.5.0"
+        required_capabilities: ["openfga_store", "higher_consistency", "batch_check"]
+      oidc:
+        connection_mode: {{ .Values.dependencies.oidc.connectionMode | quote }}
+        issuer: {{ .Values.dependencies.oidc.issuer | quote }}
+        audience: {{ .Values.dependencies.oidc.audience | quote }}
+        discovery_url: {{ .Values.dependencies.oidc.discoveryUrl | quote }}
+        jwks_url: {{ .Values.dependencies.oidc.jwksUrl | quote }}
+        tls:
+          enabled: true
+          verify: true
+        client_id: {{ .Values.dependencies.oidc.clientId | quote }}
+        client_secret_ref: oidc.client_secret
+        min_version: "1.0"
+        required_capabilities: ["discovery", "jwks", "issuer_audience"]
+    capabilities:
+      pgvector: {{ .Values.config.capabilities.pgvector }}
+      jetstream_persistence: {{ .Values.config.capabilities.jetstream_persistence }}
+      s3_versioning: {{ .Values.config.capabilities.s3_versioning }}
+      s3_object_lock: {{ .Values.config.capabilities.s3_object_lock }}
+      openfga_store: {{ .Values.config.capabilities.openfga_store }}
+    persistence:
+      ledger: postgres
+      evidence: s3
+      jetstream: rebuild_from_outbox
+      openfga: store_and_tuples
+    backup:
+      owner: operator
+      components: ["postgres", "s3_manifests", "openfga_model_tuples", "schemas", "config", "secret_refs"]
+    migration:
+      compatibility: N-1
+      auto_migrate_on_start: false

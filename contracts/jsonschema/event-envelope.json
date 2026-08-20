@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/event-envelope.json",
+  "title": "CloudEventsIntakeEnvelope",
+  "description": "CloudEvents 1.0 structured-mode envelope for Context Fabric intake. Never put document bodies, raw PII, credentials, bearer tokens, or secret source URLs in data.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "specversion",
+    "id",
+    "source",
+    "type",
+    "time",
+    "datacontenttype",
+    "data"
+  ],
+  "properties": {
+    "specversion": {
+      "type": "string",
+      "const": "1.0"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable event_id (prefer UUIDv7/ULID). Idempotent with source binding."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CloudEvents source URI identifying the registered source."
+    },
+    "type": {
+      "type": "string",
+      "pattern": "^com\\.contextfabric\\.(ingest|lifecycle)\\.[a-z0-9_.]+\\.v[0-9]+$"
+    },
+    "subject": {
+      "type": "string",
+      "description": "Optional resource or context-space subject."
+    },
+    "time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "datacontenttype": {
+      "type": "string",
+      "const": "application/json"
+    },
+    "dataschema": {
+      "type": "string",
+      "format": "uri"
+    },
+    "organizationid": {
+      "type": "string",
+      "minLength": 1,
+      "description": "CloudEvents extension: must match path orgId and source registration."
+    },
+    "contextspaceid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "resourceid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revisionid": {
+      "type": "string",
+      "minLength": 1
+    },
+    "correlationid": {
+      "type": "string"
+    },
+    "causationid": {
+      "type": "string"
+    },
+    "traceparent": {
+      "type": "string",
+      "description": "W3C trace context for operations only; never an identity/authz input."
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "producer",
+        "occurred_at",
+        "observed_at",
+        "classification",
+        "trust",
+        "source_authority",
+        "schema_id",
+        "schema_version",
+        "idempotency_key"
+      ],
+      "properties": {
+        "producer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "classification": {
+          "$ref": "taxonomy.json#/properties/classification"
+        },
+        "trust": {
+          "$ref": "taxonomy.json#/properties/trust"
+        },
+        "source_authority": {
+          "$ref": "taxonomy.json#/properties/authority"
+        },
+        "schema_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mapping_spec_id": {
+          "type": "string"
+        },
+        "mapping_spec_revision": {
+          "type": "string"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "source_external_id": {
+          "type": "string"
+        },
+        "source_revision": {
+          "type": "string"
+        },
+        "content_locator": {
+          "type": "string",
+          "description": "Reference to evidence object or locator; not inline body."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "uri": {
+              "type": "string",
+              "format": "uri"
+            },
+            "object_version": {
+              "type": "string"
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^sha256:[a-f0-9]{64}$"
+            }
+          }
+        },
+        "visibility_ref": {
+          "type": "string"
+        },
+        "purpose_allowlist": {
+          "type": "array",
+          "items": {
+            "$ref": "taxonomy.json#/properties/purpose"
+          },
+          "uniqueItems": true
+        },
+        "retention_policy_id": {
+          "type": "string"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "attributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["string", "number", "boolean", "null"]
+          },
+          "description": "Bounded mapped attributes only; no free-form bodies."
+        }
+      }
+    }
+  }
+}

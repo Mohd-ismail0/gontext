@@ -1,0 +1,33 @@
+{
+  "id": "tag-downgrade-deny",
+  "description": "Changing a free/search tag from restricted-looking to public must not grant access. Classification and visibility are system policy fields; tags never widen ACL.",
+  "principal": {
+    "type": "user",
+    "id": "user:bob",
+    "organization_id": "org_acme_0001"
+  },
+  "action": "context.search",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_note_restricted_009",
+    "organization_id": "org_acme_0001",
+    "classification": "restricted",
+    "tags_after_mutation": ["classification:public", "visibility:public"]
+  },
+  "purpose": "support",
+  "caller_filters": {
+    "include_tags": ["classification:public"]
+  },
+  "consistency": "fully_consistent",
+  "expected": {
+    "decision": "deny",
+    "reason_code": "AUTHZ_DENY_TAG_NOT_ACL",
+    "redaction_obligations": [],
+    "action_restrictions": ["context.search", "context.get"],
+    "invariants": [
+      "tags_never_grant_access",
+      "classification_is_system_field",
+      "visibility_ref_unchanged_by_tag_write"
+    ]
+  }
+}

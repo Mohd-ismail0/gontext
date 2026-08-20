@@ -1,0 +1,31 @@
+{{- if and .Values.serve.enabled .Values.serve.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "context-fabric.fullname" . }}-serve
+  labels:
+    {{- include "context-fabric.labels" . | nindent 4 }}
+    app.kubernetes.io/component: serve
+spec:
+  minAvailable: {{ .Values.serve.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "context-fabric.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: serve
+{{- end }}
+{{- if and .Values.worker.enabled .Values.worker.podDisruptionBudget.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "context-fabric.fullname" . }}-worker
+  labels:
+    {{- include "context-fabric.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  minAvailable: {{ .Values.worker.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "context-fabric.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+{{- end }}

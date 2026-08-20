@@ -1,0 +1,1999 @@
+openapi: 3.1.0
+info:
+  title: Context Fabric API
+  version: 1.0.0
+  summary: Governed organizational context plane (REST)
+  description: |
+    Public REST contract for Context Fabric v1.
+
+    **In scope:** health/version, OAuth protected-resource metadata, search/get/brief,
+    access requests, sources (+ verify/rotate), CloudEvents intake (+ batch),
+    evidence presign, change cursor feed, webhooks, export, audit/diagnose, quotas,
+    and organization bootstrap/status.
+
+    **Forbidden by contract (not documented, not implemented on this surface):**
+    arbitrary SQL, caller-defined vector predicates, raw authorization tuple
+    administration, unrestricted URL fetching, filesystem access, or a generic HTTP proxy.
+
+    MCP tools `context.search`, `context.get`, `context.brief`, and
+    `context.request_access` map 1:1 onto the same ApplicationService operations.
+  license:
+    name: Proprietary
+    url: https://context-fabric.dev/license
+  contact:
+    name: Context Fabric
+    url: https://context-fabric.dev
+
+servers:
+  - url: https://{host}
+    variables:
+      host:
+        default: context.example.com
+
+tags:
+  - name: Health
+  - name: System
+  - name: OAuth
+  - name: Retrieval
+  - name: Access
+  - name: Sources
+  - name: Intake
+  - name: Changes
+  - name: Webhooks
+  - name: Export
+  - name: Audit
+  - name: Quotas
+  - name: Admin
+
+security:
+  - OAuth2: []
+  - BearerAuth: []
+
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getHealthLive
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /health/startup:
+    get:
+      tags: [Health]
+      operationId: getHealthStartup
+      summary: Startup probe
+      description: Passes after configuration load; does not imply readiness for traffic.
+      security: []
+      responses:
+        "200":
+          description: Startup complete
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Still starting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getHealthReady
+      summary: Readiness probe
+      description: |
+        Ready when migrations applied, pinned authorization model present,
+        lifecycle reconciliation healthy, and restore/tombstone replay state clear.
+      security: []
+      responses:
+        "200":
+          description: Ready to accept traffic
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadyStatus"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /v1/system/version:
+    get:
+      tags: [System]
+      operationId: getSystemVersion
+      summary: Build and contract versions
+      security: []
+      responses:
+        "200":
+          description: Version metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemVersion"
+
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [OAuth]
+      operationId: getOAuthProtectedResourceMetadata
+      summary: OAuth 2.0 protected resource metadata (RFC 9728 / MCP)
+      security: []
+      responses:
+        "200":
+          description: Protected resource metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OAuthProtectedResourceMetadata"
+
+  /v1/organizations/{orgId}/bootstrap:
+    post:
+      tags: [Admin]
+      operationId: bootstrapOrganization
+      summary: Bootstrap organization control plane state
+      description: Creates org scaffolding via control APIs (not raw SQL/OpenFGA UI).
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BootstrapOrganizationRequest"
+      responses:
+        "201":
+          description: Bootstrap accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/status:
+    get:
+      tags: [Admin]
+      operationId: getOrganizationStatus
+      summary: Organization provisioning and health status
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context:search:
+    post:
+      tags: [Retrieval]
+      operationId: searchContext
+      summary: Policy-first hybrid search
+      description: |
+        OAuth scope ceiling `context:search`. Tags/filters only AND-narrow;
+        they never grant access. Returns a cited ContextPacket.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Context packet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPacket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/resources/{resourceId}:
+    get:
+      tags: [Retrieval]
+      operationId: getContextResource
+      summary: Get a single resource as a ContextPacket
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/ResourceId"
+        - name: purpose
+          in: query
+          required: true
+          schema:
+            $ref: "#/components/schemas/Purpose"
+        - name: consistency
+          in: query
+          schema:
+            $ref: "#/components/schemas/ConsistencyMode"
+      responses:
+        "200":
+          description: Context packet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPacket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context:brief:
+    post:
+      tags: [Retrieval]
+      operationId: briefContext
+      summary: Assemble a bounded brief ContextPacket
+      description: Canonical brief operation so MCP does not invent an unmatched path.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BriefRequest"
+      responses:
+        "200":
+          description: Brief context packet
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextPacket"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/access-requests:
+    post:
+      tags: [Access]
+      operationId: createAccessRequest
+      summary: Request access to a resource or context space
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AccessRequestCreate"
+      responses:
+        "201":
+          description: Access request created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccessRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/sources:
+    get:
+      tags: [Sources]
+      operationId: listSources
+      summary: List registered sources
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Source page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Sources]
+      operationId: registerSource
+      summary: Register a source
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceRegistrationCreate"
+      responses:
+        "201":
+          description: Source registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRegistration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/sources/{sourceId}:
+    get:
+      tags: [Sources]
+      operationId: getSource
+      summary: Get source registration
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/SourceId"
+      responses:
+        "200":
+          description: Source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRegistration"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/sources/{sourceId}:verify:
+    post:
+      tags: [Sources]
+      operationId: verifySource
+      summary: Verify source connectivity and signing
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/SourceId"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceVerificationResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/sources/{sourceId}:rotate:
+    post:
+      tags: [Sources]
+      operationId: rotateSourceCredentials
+      summary: Rotate source signing credentials
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/SourceId"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SourceRotateRequest"
+      responses:
+        "200":
+          description: Rotation result (secret material returned once if generated)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SourceRotateResult"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/intake:
+    post:
+      tags: [Intake]
+      operationId: intakeEvent
+      summary: Accept a single CloudEvents intake event
+      description: |
+        Source-bound CloudEvents over HTTP. Idempotent on (source, event id /
+        idempotency key). Client timeout never implies rejection; retries return
+        the original outcome.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - $ref: "#/components/parameters/SourceSignatureHeaders"
+      requestBody:
+        required: true
+        content:
+          application/cloudevents+json:
+            schema:
+              $ref: "#/components/schemas/CloudEvent"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloudEvent"
+      responses:
+        "202":
+          description: Accepted for processing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntakeAccepted"
+        "200":
+          description: Idempotent replay of prior outcome
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntakeAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/intake:batch:
+    post:
+      tags: [Intake]
+      operationId: intakeEventBatch
+      summary: Accept a batch of CloudEvents
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/IdempotencyKeyHeader"
+        - $ref: "#/components/parameters/SourceSignatureHeaders"
+      requestBody:
+        required: true
+        content:
+          application/cloudevents-batch+json:
+            schema:
+              type: array
+              minItems: 1
+              maxItems: 1000
+              items:
+                $ref: "#/components/schemas/CloudEvent"
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IntakeBatchRequest"
+      responses:
+        "202":
+          description: Batch accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntakeBatchAccepted"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/evidence:presign:
+    post:
+      tags: [Intake]
+      operationId: presignEvidenceUpload
+      summary: Presign evidence object upload
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvidencePresignRequest"
+      responses:
+        "200":
+          description: Presigned upload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvidencePresignResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/changes:
+    get:
+      tags: [Changes]
+      operationId: listChanges
+      summary: Organization-scoped cursor change feed (pull)
+      description: |
+        Metadata-only change events. Monotonic org-scoped cursors; no global
+        order promise. Hydrate via search/get/brief.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Resume after this cursor; omit to start from retained horizon.
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Change page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChangeFeedPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/webhooks:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookSubscriptions
+      summary: List webhook subscriptions
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Subscriptions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscriptionList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Webhooks]
+      operationId: createWebhookSubscription
+      summary: Create signed webhook subscription
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebhookSubscriptionCreate"
+      responses:
+        "201":
+          description: Subscription created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/webhooks/{subscriptionId}:
+    get:
+      tags: [Webhooks]
+      operationId: getWebhookSubscription
+      summary: Get webhook subscription
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/SubscriptionId"
+      responses:
+        "200":
+          description: Subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscription"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/webhooks/{subscriptionId}/deliveries:
+    get:
+      tags: [Webhooks]
+      operationId: listWebhookDeliveries
+      summary: Inspect webhook deliveries (including DLQ)
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/SubscriptionId"
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, delivered, failed, dlq, duplicate_ignored]
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Deliveries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookDeliveryList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/webhooks/{subscriptionId}/deliveries/{deliveryId}:replay:
+    post:
+      tags: [Webhooks]
+      operationId: replayWebhookDelivery
+      summary: Replay a webhook delivery
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - $ref: "#/components/parameters/SubscriptionId"
+        - name: deliveryId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "202":
+          description: Replay accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookDelivery"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/exports:
+    post:
+      tags: [Export]
+      operationId: createExportJob
+      summary: Create organization export job
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportJobCreate"
+      responses:
+        "202":
+          description: Export job accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/exports/{exportId}:
+    get:
+      tags: [Export]
+      operationId: getExportJob
+      summary: Get export job status and manifest
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - name: exportId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Export job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportJob"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/audit:
+    get:
+      tags: [Audit]
+      operationId: listAuditEvents
+      summary: List redacted audit events
+      description: Requires `context:audit_read`. Never returns queries, prompts, source text, or tokens.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: action
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Audit page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditEventList"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/diagnose/decision/{auditId}:
+    get:
+      tags: [Audit]
+      operationId: diagnoseDecision
+      summary: Privileged diagnostic reconstruction of a disclosure decision
+      description: |
+        Reconstructs allow/deny, obligations, and authz/policy revisions without
+        returning plaintext sensitive context.
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+        - name: auditId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Decision diagnosis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DecisionDiagnosis"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "default":
+          $ref: "#/components/responses/Error"
+
+  /v1/organizations/{orgId}/context/quotas:
+    get:
+      tags: [Quotas]
+      operationId: getQuotas
+      summary: Get organization quotas
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      responses:
+        "200":
+          description: Quotas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotaSet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "default":
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [Quotas]
+      operationId: putQuotas
+      summary: Replace organization quotas
+      parameters:
+        - $ref: "#/components/parameters/OrgId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QuotaSet"
+      responses:
+        "200":
+          description: Updated quotas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotaSet"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+        "default":
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Audience-bound access token for this protected resource.
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: https://idp.example.com/oauth/authorize
+          tokenUrl: https://idp.example.com/oauth/token
+          scopes:
+            context:search: Search context
+            context:read: Read resources and briefs
+            context:ingest: Intake and evidence upload
+            context:request_access: Create access requests
+            context:audit_read: Read audit and diagnose
+            context:manage_policy: Manage sources, webhooks, quotas, bootstrap
+
+  parameters:
+    OrgId:
+      name: orgId
+      in: path
+      required: true
+      description: Consistency assertion; must match validated token/org mapping.
+      schema:
+        type: string
+        minLength: 1
+    ResourceId:
+      name: resourceId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    SourceId:
+      name: sourceId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    SubscriptionId:
+      name: subscriptionId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    Cursor:
+      name: cursor
+      in: query
+      schema:
+        type: string
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    IdempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      schema:
+        type: string
+        maxLength: 256
+    SourceSignatureHeaders:
+      name: X-Context-Fabric-Signature
+      in: header
+      description: Source signature (HMAC or asymmetric). Companion headers may include X-Context-Fabric-Key-Id and X-Context-Fabric-Timestamp.
+      schema:
+        type: string
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Authorization denied
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found (may also mask deny)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnprocessableEntity:
+      description: Semantic validation failure
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    PayloadTooLarge:
+      description: Payload exceeds quota
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    TooManyRequests:
+      description: Rate limited
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - reason_code
+        - message
+        - retryable
+      properties:
+        reason_code:
+          type: string
+          minLength: 1
+          description: Stable machine-readable reason code.
+          examples: [AUTHZ_DENY_CROSS_ORG, INTAKE_SCHEMA_INVALID, QUOTA_EXCEEDED]
+        message:
+          type: string
+          description: Human-readable summary without sensitive content.
+        audit_id:
+          type: string
+        trace_id:
+          type: string
+        retryable:
+          type: boolean
+        retry_after:
+          type: integer
+          minimum: 0
+          description: Seconds to wait before retry when retryable.
+        documentation_url:
+          type: string
+          format: uri
+        details:
+          type: object
+          additionalProperties: true
+
+    HealthStatus:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, starting, error]
+        checked_at:
+          type: string
+          format: date-time
+
+    ReadyStatus:
+      type: object
+      additionalProperties: false
+      required: [status, checks]
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            required: [ok]
+            properties:
+              ok:
+                type: boolean
+              detail:
+                type: string
+          properties:
+            migrations:
+              type: object
+              properties:
+                ok: { type: boolean }
+            authz_model_pinned:
+              type: object
+              properties:
+                ok: { type: boolean }
+            lifecycle_reconciliation:
+              type: object
+              properties:
+                ok: { type: boolean }
+            tombstone_replay:
+              type: object
+              properties:
+                ok: { type: boolean }
+
+    SystemVersion:
+      type: object
+      additionalProperties: false
+      required: [product_version, api_version, packet_version, export_format_version]
+      properties:
+        product_version:
+          type: string
+        api_version:
+          type: string
+          const: "1.0.0"
+        packet_version:
+          type: string
+          description: ContextPacket schema version (independent of API version).
+        export_format_version:
+          type: string
+          const: context-fabric.export/v1
+        git_sha:
+          type: string
+        authz_model_id:
+          type: string
+          description: Pinned OpenFGA model ID when configured.
+        build_time:
+          type: string
+          format: date-time
+
+    OAuthProtectedResourceMetadata:
+      type: object
+      additionalProperties: true
+      required: [resource, authorization_servers, scopes_supported]
+      properties:
+        resource:
+          type: string
+          format: uri
+        authorization_servers:
+          type: array
+          items:
+            type: string
+            format: uri
+        scopes_supported:
+          type: array
+          items:
+            type: string
+        bearer_methods_supported:
+          type: array
+          items:
+            type: string
+          default: [header]
+        resource_documentation:
+          type: string
+          format: uri
+        dpop_bound_access_tokens_required:
+          type: boolean
+          default: false
+
+    Purpose:
+      type: string
+      enum: [support, account_management, marketing, finance, agent_assist]
+
+    Classification:
+      type: string
+      enum: [public, internal, confidential, restricted]
+
+    ConsistencyMode:
+      type: string
+      enum: [min_latency, fully_consistent]
+      description: |
+        Mapped to OpenFGA MINIMIZE_LATENCY / HIGHER_CONSISTENCY (ADR 0006).
+        at_least_as_fresh is not claimed in v1.
+
+    SearchRequest:
+      type: object
+      additionalProperties: false
+      required: [query, purpose]
+      properties:
+        query:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        purpose:
+          $ref: "#/components/schemas/Purpose"
+        scope:
+          type: object
+          additionalProperties: false
+          properties:
+            context_space_id: { type: string }
+            case_id: { type: string }
+            brand_id: { type: string }
+            resource_ids:
+              type: array
+              items: { type: string }
+              uniqueItems: true
+        filters:
+          type: object
+          additionalProperties: false
+          properties:
+            include_tags:
+              type: array
+              items: { type: string }
+              description: AND-narrow only; never grants access.
+            time_range:
+              type: object
+              additionalProperties: false
+              properties:
+                from: { type: string, format: date-time }
+                to: { type: string, format: date-time }
+        max_items:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 12
+        token_budget:
+          type: integer
+          minimum: 100
+          maximum: 32000
+          default: 3000
+        consistency:
+          $ref: "#/components/schemas/ConsistencyMode"
+
+    BriefRequest:
+      type: object
+      additionalProperties: false
+      required: [purpose]
+      properties:
+        purpose:
+          $ref: "#/components/schemas/Purpose"
+        scope:
+          type: object
+          additionalProperties: false
+          required: [resource_id]
+          properties:
+            resource_id: { type: string }
+            context_space_id: { type: string }
+        focus:
+          type: string
+          maxLength: 2000
+        max_items:
+          type: integer
+          minimum: 1
+          maximum: 50
+          default: 12
+        token_budget:
+          type: integer
+          minimum: 100
+          maximum: 32000
+          default: 3000
+        consistency:
+          $ref: "#/components/schemas/ConsistencyMode"
+
+    ContextPacket:
+      type: object
+      additionalProperties: false
+      required:
+        - version
+        - organization_id
+        - purpose
+        - citations
+        - redactions
+        - policy_revision
+        - authz_revision
+        - audit_id
+        - action_restrictions
+      properties:
+        version:
+          type: string
+          description: Packet schema version independent of API version.
+          examples: ["context-fabric.packet/v1"]
+        organization_id:
+          type: string
+        purpose:
+          $ref: "#/components/schemas/Purpose"
+        summary:
+          type: string
+        facts:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              text: { type: string }
+              confidence: { type: number, minimum: 0, maximum: 1 }
+              review_state:
+                type: string
+                enum: [unreviewed, approved, rejected, needs_review]
+              citation_ids:
+                type: array
+                items: { type: string }
+        timeline:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              at: { type: string, format: date-time }
+              text: { type: string }
+              citation_ids:
+                type: array
+                items: { type: string }
+        stakeholders:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              display_name: { type: string }
+              role: { type: string }
+              citation_ids:
+                type: array
+                items: { type: string }
+        citations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Citation"
+        redactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Redaction"
+        policy_revision:
+          type: string
+        authz_revision:
+          type: string
+          description: Authorization model/revision identifier used for the decision.
+        audit_id:
+          type: string
+        action_restrictions:
+          type: array
+          items:
+            type: string
+          description: Actions denied for this principal on the returned context (e.g. outbound.send).
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        responded_at:
+          type: string
+          format: date-time
+
+    Citation:
+      type: object
+      additionalProperties: false
+      required: [citation_id, resource_id, revision_id]
+      properties:
+        citation_id: { type: string }
+        resource_id: { type: string }
+        revision_id: { type: string }
+        page: { type: integer, minimum: 1 }
+        section: { type: string }
+        locator: { type: string }
+        observed_at: { type: string, format: date-time }
+        trust:
+          type: string
+          enum: [trusted_system, trusted_internal, untrusted_external, generated]
+        source_authority:
+          type: string
+          enum: [source_of_truth, corroborating, user_claim, inferred]
+
+    Redaction:
+      type: object
+      additionalProperties: false
+      required: [profile, reason_code]
+      properties:
+        profile: { type: string }
+        reason_code: { type: string }
+        fields:
+          type: array
+          items: { type: string }
+        classification_ceiling:
+          $ref: "#/components/schemas/Classification"
+
+    AccessRequestCreate:
+      type: object
+      additionalProperties: false
+      required: [resource_id, purpose, justification]
+      properties:
+        resource_id: { type: string }
+        context_space_id: { type: string }
+        purpose:
+          $ref: "#/components/schemas/Purpose"
+        justification:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        requested_actions:
+          type: array
+          items:
+            type: string
+            enum: [context.search, context.get, context.brief]
+          uniqueItems: true
+
+    AccessRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, status, resource_id, purpose, created_at]
+      properties:
+        request_id: { type: string }
+        status:
+          type: string
+          enum: [pending, approved, denied, expired]
+        resource_id: { type: string }
+        purpose:
+          $ref: "#/components/schemas/Purpose"
+        justification: { type: string }
+        created_at: { type: string, format: date-time }
+        decided_at:
+          type: ["string", "null"]
+          format: date-time
+        audit_id: { type: string }
+
+    SourceRegistrationCreate:
+      type: object
+      additionalProperties: false
+      required:
+        - display_name
+        - allowed_record_types
+        - trust_ceiling
+        - authority_ceiling
+        - classification_default
+        - retention_policy_id
+        - visibility_mapping_policy
+        - signing
+        - rate_quota
+        - schema_versions
+      properties:
+        display_name: { type: string, maxLength: 256 }
+        description: { type: string, maxLength: 1024 }
+        allowed_record_types:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [message, fact, artifact, event, observation, document]
+        trust_ceiling:
+          type: string
+          enum: [trusted_system, trusted_internal, untrusted_external, generated]
+        authority_ceiling:
+          type: string
+          enum: [source_of_truth, corroborating, user_claim, inferred]
+        classification_default:
+          $ref: "#/components/schemas/Classification"
+        retention_policy_id: { type: string }
+        visibility_mapping_policy:
+          $ref: "#/components/schemas/VisibilityMappingPolicy"
+        signing:
+          $ref: "#/components/schemas/SourceSigning"
+        rate_quota:
+          $ref: "#/components/schemas/SourceRateQuota"
+        schema_versions:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/SourceSchemaVersion"
+        active_mapping_spec_id: { type: string }
+        active_mapping_spec_revision: { type: string }
+
+    SourceRegistration:
+      allOf:
+        - $ref: "#/components/schemas/SourceRegistrationCreate"
+        - type: object
+          required: [source_id, organization_id, status]
+          properties:
+            source_id: { type: string }
+            organization_id: { type: string }
+            status:
+              type: string
+              enum: [pending_verification, active, paused, revoked]
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
+
+    SourceList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceRegistration"
+        next_cursor:
+          type: ["string", "null"]
+
+    VisibilityMappingPolicy:
+      type: object
+      additionalProperties: false
+      required: [mode, allowed_visibility_refs]
+      properties:
+        mode:
+          type: string
+          enum: [fixed_ref, mapped_enum, deny_by_default]
+        allowed_visibility_refs:
+          type: array
+          items: { type: string }
+          uniqueItems: true
+        default_visibility_ref: { type: string }
+
+    SourceSigning:
+      type: object
+      additionalProperties: false
+      required: [method]
+      properties:
+        method:
+          type: string
+          enum: [hmac_sha256, ed25519, oidc_jwt]
+        key_id: { type: string }
+        secret_ref: { type: string }
+        replay_window_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 300
+
+    SourceRateQuota:
+      type: object
+      additionalProperties: false
+      required: [events_per_minute, bytes_per_minute]
+      properties:
+        events_per_minute: { type: integer, minimum: 1 }
+        bytes_per_minute: { type: integer, minimum: 1024 }
+        max_batch_size:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+
+    SourceSchemaVersion:
+      type: object
+      additionalProperties: false
+      required: [schema_id, version]
+      properties:
+        schema_id: { type: string }
+        version: { type: string }
+        mapping_spec_id: { type: string }
+        mapping_spec_revision: { type: string }
+
+    SourceVerificationResult:
+      type: object
+      additionalProperties: false
+      required: [source_id, status]
+      properties:
+        source_id: { type: string }
+        status:
+          type: string
+          enum: [ok, failed]
+        checked_at: { type: string, format: date-time }
+        reason_code: { type: string }
+        detail: { type: string }
+
+    SourceRotateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        method:
+          type: string
+          enum: [hmac_sha256, ed25519]
+        retire_previous_after_seconds:
+          type: integer
+          minimum: 0
+          default: 3600
+
+    SourceRotateResult:
+      type: object
+      additionalProperties: false
+      required: [source_id, key_id]
+      properties:
+        source_id: { type: string }
+        key_id: { type: string }
+        secret_once:
+          type: string
+          description: Returned once for HMAC; never logged.
+        public_key_pem:
+          type: string
+        expires_previous_at:
+          type: string
+          format: date-time
+
+    CloudEvent:
+      type: object
+      description: CloudEvents 1.0 structured mode. See contracts/jsonschema/event-envelope.json.
+      additionalProperties: true
+      required: [specversion, id, source, type, time, datacontenttype, data]
+      properties:
+        specversion:
+          type: string
+          const: "1.0"
+        id: { type: string }
+        source: { type: string }
+        type: { type: string }
+        subject: { type: string }
+        time: { type: string, format: date-time }
+        datacontenttype:
+          type: string
+          const: application/json
+        dataschema: { type: string, format: uri }
+        organizationid: { type: string }
+        contextspaceid: { type: string }
+        resourceid: { type: string }
+        revisionid: { type: string }
+        data:
+          type: object
+          additionalProperties: true
+
+    IntakeBatchRequest:
+      type: object
+      additionalProperties: false
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: "#/components/schemas/CloudEvent"
+
+    IntakeAccepted:
+      type: object
+      additionalProperties: false
+      required: [event_id, status, organization_id]
+      properties:
+        event_id: { type: string }
+        organization_id: { type: string }
+        status:
+          type: string
+          enum: [accepted, duplicate, quarantined]
+        resource_id: { type: string }
+        revision_id: { type: string }
+        audit_id: { type: string }
+        idempotent_replay:
+          type: boolean
+          default: false
+
+    IntakeBatchAccepted:
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/IntakeAccepted"
+        accepted_count: { type: integer, minimum: 0 }
+        rejected_count: { type: integer, minimum: 0 }
+
+    EvidencePresignRequest:
+      type: object
+      additionalProperties: false
+      required: [source_id, content_type, byte_size, sha256]
+      properties:
+        source_id: { type: string }
+        content_type: { type: string }
+        byte_size: { type: integer, minimum: 1, maximum: 104857600 }
+        sha256:
+          type: string
+          pattern: "^sha256:[a-f0-9]{64}$"
+        resource_id: { type: string }
+        filename: { type: string }
+
+    EvidencePresignResponse:
+      type: object
+      additionalProperties: false
+      required: [upload_url, method, headers, evidence_uri, expires_at]
+      properties:
+        upload_url: { type: string, format: uri }
+        method:
+          type: string
+          enum: [PUT, POST]
+        headers:
+          type: object
+          additionalProperties: { type: string }
+        evidence_uri: { type: string, format: uri }
+        object_version_hint: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    ChangeEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - event_id
+        - organization_id
+        - cursor
+        - occurred_at
+        - change_type
+        - resource_id
+        - revision_id
+        - lifecycle_state
+        - schema_version
+        - profile_version
+      properties:
+        event_id: { type: string }
+        organization_id: { type: string }
+        cursor: { type: string }
+        occurred_at: { type: string, format: date-time }
+        change_type:
+          type: string
+          enum:
+            - resource.accepted
+            - resource.indexed
+            - resource.reclassified
+            - resource.tombstoned
+            - resource.purged
+            - resource.failed
+        context_space_id: { type: string }
+        resource_id: { type: string }
+        revision_id: { type: string }
+        lifecycle_state:
+          type: string
+          enum:
+            - ACCEPTED
+            - PROJECTING
+            - INDEXED
+            - FAILED
+            - RECLASSIFIED
+            - TOMBSTONED
+            - PURGE_PENDING
+            - PURGED
+        schema_version: { type: string }
+        profile_version: { type: string }
+        brand_id:
+          type: ["string", "null"]
+        source_id:
+          type: ["string", "null"]
+
+    ChangeFeedPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeEvent"
+        next_cursor:
+          type: ["string", "null"]
+        truncated:
+          type: boolean
+          default: false
+
+    WebhookSubscriptionCreate:
+      type: object
+      additionalProperties: false
+      required: [endpoint_url, event_types, signing]
+      properties:
+        endpoint_url:
+          type: string
+          format: uri
+        event_types:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - resource.accepted
+              - resource.indexed
+              - resource.reclassified
+              - resource.tombstoned
+              - resource.purged
+              - resource.failed
+              - "*"
+        signing:
+          type: object
+          additionalProperties: false
+          required: [method]
+          properties:
+            method:
+              type: string
+              enum: [hmac_sha256, ed25519]
+        description: { type: string, maxLength: 512 }
+
+    WebhookSubscription:
+      type: object
+      additionalProperties: false
+      required: [subscription_id, organization_id, endpoint_url, status, event_types]
+      properties:
+        subscription_id: { type: string }
+        organization_id: { type: string }
+        endpoint_url: { type: string, format: uri }
+        status:
+          type: string
+          enum: [pending_verification, active, paused, revoked]
+        event_types:
+          type: array
+          items: { type: string }
+        signing_method:
+          type: string
+          enum: [hmac_sha256, ed25519]
+        key_id: { type: string }
+        created_at: { type: string, format: date-time }
+        verified_at:
+          type: ["string", "null"]
+          format: date-time
+
+    WebhookSubscriptionList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookSubscription"
+        next_cursor:
+          type: ["string", "null"]
+
+    WebhookDelivery:
+      type: object
+      additionalProperties: false
+      required: [delivery_id, subscription_id, event_id, status, attempt]
+      properties:
+        delivery_id: { type: string }
+        subscription_id: { type: string }
+        event_id: { type: string }
+        status:
+          type: string
+          enum: [pending, delivered, failed, dlq, duplicate_ignored]
+        attempt: { type: integer, minimum: 1 }
+        response_code: { type: integer }
+        next_retry_at:
+          type: ["string", "null"]
+          format: date-time
+        last_error_reason_code: { type: string }
+        created_at: { type: string, format: date-time }
+        delivered_at:
+          type: ["string", "null"]
+          format: date-time
+
+    WebhookDeliveryList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookDelivery"
+        next_cursor:
+          type: ["string", "null"]
+
+    ExportJobCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        include_evidence: { type: boolean, default: true }
+        include_derived: { type: boolean, default: false }
+        include_audit: { type: boolean, default: true }
+        context_space_ids:
+          type: array
+          items: { type: string }
+          uniqueItems: true
+        as_of: { type: string, format: date-time }
+
+    ExportJob:
+      type: object
+      additionalProperties: false
+      required: [export_id, organization_id, status, format_version, created_at]
+      properties:
+        export_id: { type: string }
+        organization_id: { type: string }
+        status:
+          type: string
+          enum: [pending, running, completed, failed, cancelled]
+        format_version:
+          type: string
+          const: context-fabric.export/v1
+        created_at: { type: string, format: date-time }
+        completed_at:
+          type: ["string", "null"]
+          format: date-time
+        download_uri:
+          type: ["string", "null"]
+          format: uri
+        expires_at:
+          type: ["string", "null"]
+          format: date-time
+        checksums:
+          type: object
+          additionalProperties: false
+          properties:
+            manifest_sha256:
+              type: string
+              pattern: "^sha256:[a-f0-9]{64}$"
+            archive_sha256:
+              type: string
+              pattern: "^sha256:[a-f0-9]{64}$"
+        reason_code: { type: string }
+
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      required: [audit_id, organization_id, action, decided_at, decision]
+      properties:
+        audit_id: { type: string }
+        organization_id: { type: string }
+        action: { type: string }
+        decision:
+          type: string
+          enum: [allow, deny]
+        reason_code: { type: string }
+        principal_type: { type: string }
+        principal_id_hash: { type: string }
+        delegation_grant_id: { type: string }
+        policy_revision: { type: string }
+        authz_revision: { type: string }
+        consistency:
+          $ref: "#/components/schemas/ConsistencyMode"
+        resource_count: { type: integer, minimum: 0 }
+        trace_id: { type: string }
+        decided_at: { type: string, format: date-time }
+        latency_ms: { type: integer, minimum: 0 }
+
+    AuditEventList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEvent"
+        next_cursor:
+          type: ["string", "null"]
+
+    DecisionDiagnosis:
+      type: object
+      additionalProperties: false
+      required: [audit_id, decision, reason_code, policy_revision, authz_revision]
+      properties:
+        audit_id: { type: string }
+        decision:
+          type: string
+          enum: [allow, deny]
+        reason_code: { type: string }
+        policy_revision: { type: string }
+        authz_revision: { type: string }
+        consistency:
+          $ref: "#/components/schemas/ConsistencyMode"
+        obligations:
+          type: array
+          items:
+            $ref: "#/components/schemas/Redaction"
+        action_restrictions:
+          type: array
+          items: { type: string }
+        actor_chain:
+          type: array
+          items: { type: string }
+        notes:
+          type: string
+          description: Redacted diagnostic narrative; no source plaintext.
+
+    QuotaSet:
+      type: object
+      additionalProperties: false
+      required: [organization_id, limits]
+      properties:
+        organization_id: { type: string }
+        limits:
+          $ref: "#/components/schemas/QuotaLimits"
+        updated_at: { type: string, format: date-time }
+        updated_by: { type: string }
+
+    QuotaLimits:
+      type: object
+      additionalProperties: false
+      properties:
+        search_per_minute: { type: integer, minimum: 1 }
+        intake_events_per_minute: { type: integer, minimum: 1 }
+        intake_bytes_per_minute: { type: integer, minimum: 1024 }
+        webhook_deliveries_per_minute: { type: integer, minimum: 1 }
+        exports_per_day: { type: integer, minimum: 1 }
+        parser_jobs_per_hour: { type: integer, minimum: 1 }
+        embedding_jobs_per_hour: { type: integer, minimum: 1 }
+
+    BootstrapOrganizationRequest:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name: { type: string, minLength: 1, maxLength: 256 }
+        pin_authz_model_id: { type: string }
+        default_quotas:
+          $ref: "#/components/schemas/QuotaLimits"
+
+    OrganizationStatus:
+      type: object
+      additionalProperties: false
+      required: [organization_id, status]
+      properties:
+        organization_id: { type: string }
+        display_name: { type: string }
+        status:
+          type: string
+          enum: [provisioning, ready, degraded, suspended]
+        authz_model_id: { type: string }
+        sources_active: { type: integer, minimum: 0 }
+        last_intake_at:
+          type: ["string", "null"]
+          format: date-time
+        doctor_summary:
+          type: string
+        checked_at: { type: string, format: date-time }

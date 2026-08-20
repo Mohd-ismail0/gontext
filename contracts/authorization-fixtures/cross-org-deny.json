@@ -1,0 +1,34 @@
+{
+  "id": "cross-org-deny",
+  "description": "Caller from org_acme cannot read a resource whose organization parent is org_other, even with matching tags or forged path orgId.",
+  "principal": {
+    "type": "user",
+    "id": "user:bob",
+    "organization_id": "org_acme_0001"
+  },
+  "action": "context.get",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_other_org_001",
+    "organization_id": "org_other_0002",
+    "classification": "internal"
+  },
+  "purpose": "support",
+  "path_org_id": "org_acme_0001",
+  "consistency": "fully_consistent",
+  "expected": {
+    "decision": "deny",
+    "reason_code": "AUTHZ_DENY_CROSS_ORG",
+    "redaction_obligations": [],
+    "action_restrictions": [
+      "context.search",
+      "context.get",
+      "context.brief"
+    ],
+    "invariants": [
+      "path_org_must_match_token_org",
+      "rls_organization_id_isolation",
+      "no_cross_org_parent_references"
+    ]
+  }
+}

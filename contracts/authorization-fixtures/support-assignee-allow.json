@@ -1,0 +1,36 @@
+{
+  "id": "support-assignee-allow-search",
+  "description": "Support team assignee may search within assigned case scope for agent_assist purpose when purpose is on the record allowlist.",
+  "principal": {
+    "type": "user",
+    "id": "user:dave",
+    "organization_id": "org_acme_0001",
+    "team": "team:team_support_0001"
+  },
+  "action": "context.search",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_case_sup_412",
+    "organization_id": "org_acme_0001",
+    "classification": "confidential",
+    "purpose_allowlist": ["support", "agent_assist"]
+  },
+  "purpose": "agent_assist",
+  "consistency": "min_latency",
+  "scope": {
+    "case_id": "SUP-412"
+  },
+  "expected": {
+    "decision": "allow",
+    "reason_code": "AUTHZ_ALLOW_ASSIGNEE_SEARCH",
+    "redaction_obligations": [
+      {
+        "profile": "support_search",
+        "mask_fields": ["ssn", "bank_account"],
+        "max_items": 12,
+        "strip_classifications_above": "confidential"
+      }
+    ],
+    "action_restrictions": []
+  }
+}

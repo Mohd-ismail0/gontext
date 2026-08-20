@@ -1,0 +1,39 @@
+{
+  "id": "agent-active-allow",
+  "description": "Active agent with valid delegation grant intersecting assignee rights may search for agent_assist.",
+  "principal": {
+    "type": "agent",
+    "id": "agent:support-assist",
+    "organization_id": "org_acme_0001",
+    "delegation_grant_id": "grant_active_001",
+    "delegation_status": "active",
+    "subject": "user:alice",
+    "owner": "team:team_support_0001",
+    "runtime": "runtime:worker-a"
+  },
+  "action": "context.search",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_case_sup_412",
+    "organization_id": "org_acme_0001",
+    "classification": "confidential"
+  },
+  "purpose": "agent_assist",
+  "consistency": "min_latency",
+  "expected": {
+    "decision": "allow",
+    "reason_code": "AUTHZ_ALLOW_AGENT_DELEGATION",
+    "redaction_obligations": [
+      {
+        "profile": "agent_assist_default",
+        "mask_fields": ["payment_card", "government_id", "secrets"],
+        "strip_classifications_above": "confidential",
+        "quote_untrusted_external": true
+      }
+    ],
+    "action_restrictions": [
+      "draft.reply",
+      "outbound.send"
+    ]
+  }
+}

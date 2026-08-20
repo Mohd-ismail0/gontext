@@ -1,0 +1,35 @@
+{
+  "id": "agent-expired-deny",
+  "description": "Expired delegation grant denies even if OpenFGA membership tuples remain.",
+  "principal": {
+    "type": "agent",
+    "id": "agent:support-assist",
+    "organization_id": "org_acme_0001",
+    "delegation_grant_id": "grant_expired_003",
+    "delegation_status": "expired",
+    "expires_at": "2026-08-01T00:00:00Z",
+    "subject": "user:alice",
+    "owner": "team:team_support_0001",
+    "runtime": "runtime:worker-a"
+  },
+  "action": "context.brief",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_case_sup_412",
+    "organization_id": "org_acme_0001",
+    "classification": "confidential"
+  },
+  "purpose": "agent_assist",
+  "consistency": "fully_consistent",
+  "expected": {
+    "decision": "deny",
+    "reason_code": "AUTHZ_DENY_DELEGATION_EXPIRED",
+    "redaction_obligations": [],
+    "action_restrictions": [
+      "context.search",
+      "context.get",
+      "context.brief",
+      "context.request_access"
+    ]
+  }
+}

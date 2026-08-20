@@ -1,0 +1,97 @@
+# Sample OpenFGA tuples for Context Fabric authorization fixtures.
+# These are fixtures only — not production grants.
+# Object IDs are opaque UUIDs; principals use typed prefixes.
+
+model_id: "01PLACEHOLDER_PINNED_MODEL_ID"
+store_id: "01PLACEHOLDER_STORE_ID"
+organization_id: "org_acme_0001"
+
+tuples:
+  # Organization roles
+  - user: user:alice
+    relation: member
+    object: organization:org_acme_0001
+  - user: user:alice
+    relation: manager
+    object: organization:org_acme_0001
+  - user: user:bob
+    relation: member
+    object: organization:org_acme_0001
+  - user: user:carol
+    relation: knowledge_admin
+    object: organization:org_acme_0001
+  - user: user:dave
+    relation: member
+    object: organization:org_acme_0001
+
+  # Team support
+  - user: organization:org_acme_0001
+    relation: organization
+    object: team:team_support_0001
+  - user: user:dave
+    relation: member
+    object: team:team_support_0001
+  - user: user:alice
+    relation: manager
+    object: team:team_support_0001
+
+  # Optional brand child
+  - user: organization:org_acme_0001
+    relation: organization
+    object: brand:brand_xsama_0001
+  - user: user:bob
+    relation: member
+    object: brand:brand_xsama_0001
+
+  # Case resource — owners, assignees, readers
+  - user: organization:org_acme_0001
+    relation: organization
+    object: resource:res_case_sup_412
+  - user: brand:brand_xsama_0001
+    relation: brand
+    object: resource:res_case_sup_412
+  - user: user:alice
+    relation: owner
+    object: resource:res_case_sup_412
+  - user: user:dave
+    relation: assignee
+    object: resource:res_case_sup_412
+  - user: team:team_support_0001#member
+    relation: reader
+    object: resource:res_case_sup_412
+
+  # Restricted note under the case
+  - user: organization:org_acme_0001
+    relation: organization
+    object: resource:res_note_restricted_009
+  - user: resource:res_case_sup_412
+    relation: parent
+    object: resource:res_note_restricted_009
+  - user: user:alice
+    relation: restricted_reader
+    object: resource:res_note_restricted_009
+
+  # Active agent principal (delegation evaluated outside OpenFGA)
+  - user: agent:support-assist
+    relation: member
+    object: organization:org_acme_0001
+  - user: agent:support-assist
+    relation: assignee
+    object: resource:res_case_sup_412
+
+  # Cross-org resource (other org) — used for deny fixtures
+  - user: organization:org_other_0002
+    relation: organization
+    object: resource:res_other_org_001
+  - user: user:eve
+    relation: member
+    object: organization:org_other_0002
+  - user: user:eve
+    relation: reader
+    object: resource:res_other_org_001
+
+# Customer subjects are fixture-only principals for deny/allow matrices.
+# Customer-facing REST/MCP authentication is out of v1 (ADR 0012).
+customer_fixture_principals:
+  - principal: customer:cust_acme_99
+    note: "Never accepted by live authn adapters in v1; authorization-fixtures only."

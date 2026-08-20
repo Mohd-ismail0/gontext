@@ -1,0 +1,32 @@
+{
+  "id": "manager-allow-case-manage",
+  "description": "Organization manager can manage and brief an owned case; manager alone still does not imply unrestricted restricted_reader on nested notes.",
+  "principal": {
+    "type": "user",
+    "id": "user:alice",
+    "organization_id": "org_acme_0001",
+    "roles": ["member", "manager"]
+  },
+  "action": "context.brief",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_case_sup_412",
+    "organization_id": "org_acme_0001",
+    "classification": "confidential"
+  },
+  "purpose": "support",
+  "consistency": "min_latency",
+  "expected": {
+    "decision": "allow",
+    "reason_code": "AUTHZ_ALLOW_OWNER_OR_MANAGER",
+    "redaction_obligations": [
+      {
+        "profile": "manager_brief",
+        "mask_fields": ["payment_card", "government_id"],
+        "strip_classifications_above": "confidential"
+      }
+    ],
+    "action_restrictions": [],
+    "notes": "Restricted child notes require explicit restricted_reader; see employee-deny and owner fixtures."
+  }
+}

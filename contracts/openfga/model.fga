@@ -1,0 +1,66 @@
+# Context Fabric OpenFGA authorization model (v1)
+#
+# PINNED MODEL USAGE
+# ------------------
+# Deployments MUST pin an authorization model ID (store + model_id) in runtime
+# config. Do not auto-promote unsigned model edits.
+#
+# - Gateways load the pinned model_id at startup; readiness fails if the pin
+#   is missing or unknown to the store.
+# - Model rollouts: write the candidate model, run shadow checks (old vs new)
+#   against contracts/authorization-fixtures/*, then promote the pin.
+# - Consistency mapping (ADR 0006):
+#     min_latency          -> OpenFGA MINIMIZE_LATENCY
+#     revocation-sensitive -> OpenFGA HIGHER_CONSISTENCY (+ no authz cache)
+#     fully_consistent     -> OpenFGA HIGHER_CONSISTENCY (+ tuple-write ack)
+# - Do NOT claim Zookie-style at_least_as_fresh until a provider with causal
+#   tokens is selected.
+# - Public APIs never expose raw tuple administration. Operators use cf /
+#   control APIs only.
+# - Brand is an optional governed child of organization. Display tags such as
+#   brand:xsama NEVER establish tenancy or visibility.
+# - Manager status alone does NOT grant restricted_reader access.
+# - Cross-organization sharing is an explicit, expiring, approved exception
+#   outside the normal v1 path (modeled via time-bounded tuples operationally).
+
+model
+  schema 1.1
+
+type user
+
+type agent
+
+type service
+
+type organization
+  relations
+    define member: [user, agent, service]
+    define manager: [user]
+    define knowledge_admin: [user]
+    define compliance_reviewer: [user]
+
+type team
+  relations
+    define organization: [organization]
+    define member: [user, agent, service] or member from organization
+    define manager: [user] or manager from organization
+
+type brand
+  relations
+    define organization: [organization]
+    define member: [user, agent, service] or member from organization
+    define manager: [user] or manager from organization
+    define knowledge_admin: [user] or knowledge_admin from organization
+
+type resource
+  relations
+    define organization: [organization]
+    define brand: [brand]
+    define parent: [resource]
+    define owner: [user, team]
+    define assignee: [user, agent, team#member]
+    define reader: [user, agent, service, team#member, organization#member]
+    define restricted_reader: [user, agent, service]
+    define can_manage: owner or manager from organization or knowledge_admin from organization or can_manage from parent
+    # Manager/org membership alone does not imply restricted access.
+    define can_read: reader or restricted_reader or owner or assignee or can_read from parent or can_manage

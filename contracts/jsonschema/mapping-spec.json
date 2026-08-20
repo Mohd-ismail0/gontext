@@ -1,0 +1,203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/mapping-spec.json",
+  "title": "MappingSpec",
+  "description": "Versioned mapping from source payloads into canonical records. Cannot mint organizations, broaden ACLs, or declare higher source authority than the source registration allows. Client fields may only narrow controls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "id",
+    "revision",
+    "organization_id",
+    "source_id",
+    "status",
+    "mappings"
+  ],
+  "properties": {
+    "api_version": {
+      "type": "string",
+      "const": "context-fabric.mapping/v1"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "organization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["draft", "reviewed", "active", "deprecated"]
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "reviewed_by": {
+      "type": ["string", "null"]
+    },
+    "reviewed_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "dry_run_fixture_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "mappings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_external_id",
+        "source_revision",
+        "context_space_id",
+        "resource_id",
+        "resource_type",
+        "timestamps",
+        "content_locator"
+      ],
+      "properties": {
+        "source_external_id": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "context_space_id": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "resource_id": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "resource_type": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "brand_id": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "timestamps": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["occurred_at", "observed_at"],
+          "properties": {
+            "occurred_at": {
+              "$ref": "#/$defs/JsonPathOrTemplate"
+            },
+            "observed_at": {
+              "$ref": "#/$defs/JsonPathOrTemplate"
+            }
+          }
+        },
+        "content_locator": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "controlled_taxonomy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "domain": {
+              "$ref": "#/$defs/JsonPathOrTemplate"
+            },
+            "channel": {
+              "$ref": "#/$defs/JsonPathOrTemplate"
+            },
+            "topic": {
+              "$ref": "#/$defs/JsonPathOrTemplate"
+            },
+            "case_type": {
+              "$ref": "#/$defs/JsonPathOrTemplate"
+            },
+            "brand_tag": {
+              "$ref": "#/$defs/JsonPathOrTemplate",
+              "description": "Display/search tag only; never establishes tenancy or visibility."
+            }
+          }
+        },
+        "visibility_ref": {
+          "$ref": "#/$defs/JsonPathOrTemplate",
+          "description": "Must resolve within source registration visibility-mapping policy; cannot invent new ACL grants."
+        },
+        "classification": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "purpose_allowlist": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "trust": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "source_authority": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "retention_policy_id": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        },
+        "tags": {
+          "$ref": "#/$defs/JsonPathOrTemplate"
+        }
+      }
+    },
+    "constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cannot_mint_organization": {
+          "type": "boolean",
+          "const": true
+        },
+        "cannot_broaden_acl": {
+          "type": "boolean",
+          "const": true
+        },
+        "authority_ceiling_from_source": {
+          "type": "boolean",
+          "const": true
+        },
+        "client_fields_may_only_narrow": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "default": {
+        "cannot_mint_organization": true,
+        "cannot_broaden_acl": true,
+        "authority_ceiling_from_source": true,
+        "client_fields_may_only_narrow": true
+      }
+    }
+  },
+  "$defs": {
+    "JsonPathOrTemplate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expr"],
+      "properties": {
+        "expr": {
+          "type": "string",
+          "minLength": 1,
+          "description": "JSONPath, constant, or limited template expression over the source payload."
+        },
+        "default": {
+          "type": ["string", "number", "boolean", "null", "array"]
+        },
+        "transform": {
+          "type": "string",
+          "enum": ["identity", "lowercase", "trim", "sha256_hex", "uuid_v5"]
+        }
+      }
+    }
+  }
+}

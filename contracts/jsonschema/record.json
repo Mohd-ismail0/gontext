@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/record.json",
+  "title": "CanonicalRecord",
+  "description": "Canonical context record after MappingSpec normalization. System-enforced fields cannot be broadened by client tags or MappingSpec.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "organization_id",
+    "context_space_id",
+    "resource_type",
+    "resource_id",
+    "revision_id",
+    "classification",
+    "purpose_allowlist",
+    "trust",
+    "source_authority",
+    "retention_policy_id",
+    "visibility_ref",
+    "source_event_id",
+    "content_hash",
+    "lifecycle_state",
+    "valid_time",
+    "system_time"
+  ],
+  "properties": {
+    "organization_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Canonical tenancy key. Path {orgId} must match token/org mapping."
+    },
+    "context_space_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "brand_id": {
+      "type": ["string", "null"],
+      "description": "Optional governed brand child scope. Opaque ID; never inferred from free tags."
+    },
+    "resource_type": {
+      "type": "string",
+      "enum": [
+        "message",
+        "fact",
+        "artifact",
+        "event",
+        "summary",
+        "observation",
+        "case",
+        "document",
+        "person",
+        "account"
+      ]
+    },
+    "resource_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable logical resource identity."
+    },
+    "revision_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Immutable observed version of the resource."
+    },
+    "classification": {
+      "$ref": "taxonomy.json#/properties/classification"
+    },
+    "purpose_allowlist": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "taxonomy.json#/properties/purpose"
+      }
+    },
+    "trust": {
+      "$ref": "taxonomy.json#/properties/trust"
+    },
+    "source_authority": {
+      "$ref": "taxonomy.json#/properties/authority"
+    },
+    "retention_policy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "visibility_ref": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Authorization object reference (e.g. resource UUID relation), not a free tag."
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "uniqueItems": true,
+      "description": "Controlled and free/search tags. Tags never grant access."
+    },
+    "source_system": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_external_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_event_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^sha256:[a-f0-9]{64}$"
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "object_version", "sha256"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "object_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "content_type": {
+          "type": "string"
+        },
+        "byte_size": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "RECEIVED",
+        "VALIDATED",
+        "QUARANTINED",
+        "ACCEPTED",
+        "PROJECTING",
+        "INDEXED",
+        "FAILED",
+        "RECLASSIFIED",
+        "TOMBSTONED",
+        "PURGE_PENDING",
+        "PURGED"
+      ]
+    },
+    "valid_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the source says the fact applied."
+    },
+    "system_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the platform observed or processed it."
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "review_state": {
+      "type": "string",
+      "enum": ["unreviewed", "approved", "rejected", "needs_review"]
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 512
+    },
+    "content_locator": {
+      "type": "string",
+      "description": "Pointer to retrieval-safe content; bodies are not embedded in events."
+    },
+    "supersedes_revision_id": {
+      "type": ["string", "null"]
+    },
+    "tombstone": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "dominates": {
+          "type": "boolean",
+          "const": true
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,599 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.io/schemas/deployment-config/v1.json",
+  "title": "ContextFabricDeploymentConfig",
+  "description": "Runtime deployment configuration for Context Fabric. Profiles select packaging only; they never change authorization, lifecycle, or canonical semantics.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "profile",
+    "roles",
+    "network",
+    "dependencies",
+    "capabilities",
+    "persistence",
+    "backup",
+    "migration"
+  ],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "context-fabric.io/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "DeploymentConfig"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-z0-9.]+)?$"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "profile": {
+      "type": "string",
+      "enum": ["demo", "starter", "xsama", "scaled"],
+      "description": "Packaging profile per ADR 0002."
+    },
+    "roles": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "serve",
+          "worker",
+          "connector",
+          "migrate",
+          "bootstrap",
+          "doctor",
+          "backup",
+          "restore",
+          "reconcile",
+          "all"
+        ]
+      },
+      "description": "Image roles to run. Demo may use 'all' (serve+worker in one process)."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["IfNotPresent", "Always", "Never"],
+          "default": "IfNotPresent"
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["public_surface", "private_dependencies"],
+      "properties": {
+        "public_surface": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["serve"]
+          },
+          "description": "Only serve may be publicly reachable."
+        },
+        "private_dependencies": {
+          "type": "boolean",
+          "const": true
+        },
+        "serve_listen_addr": {
+          "type": "string",
+          "default": ":8080"
+        },
+        "serve_public_port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 8080
+        }
+      }
+    },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgres", "s3", "nats", "openfga", "oidc"],
+      "properties": {
+        "postgres": { "$ref": "#/$defs/postgresDependency" },
+        "s3": { "$ref": "#/$defs/s3Dependency" },
+        "nats": { "$ref": "#/$defs/natsDependency" },
+        "openfga": { "$ref": "#/$defs/openfgaDependency" },
+        "oidc": { "$ref": "#/$defs/oidcDependency" }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pgvector",
+        "jetstream_persistence",
+        "s3_versioning",
+        "s3_object_lock",
+        "openfga_store"
+      ],
+      "properties": {
+        "pgvector": {
+          "type": "boolean",
+          "description": "PostgreSQL must expose the pgvector extension."
+        },
+        "jetstream_persistence": {
+          "type": "boolean",
+          "description": "NATS JetStream must use durable file storage."
+        },
+        "s3_versioning": {
+          "type": "boolean",
+          "description": "Evidence buckets must have object versioning enabled."
+        },
+        "s3_object_lock": {
+          "type": "boolean",
+          "description": "Object Lock / legal-hold capability required for compliance deletion manifests."
+        },
+        "openfga_store": {
+          "type": "boolean",
+          "description": "OpenFGA store and pinned authorization model must exist."
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ledger", "evidence", "jetstream", "openfga"],
+      "properties": {
+        "ledger": {
+          "type": "string",
+          "enum": ["postgres"],
+          "description": "Authoritative canonical ledger."
+        },
+        "evidence": {
+          "type": "string",
+          "enum": ["s3"],
+          "description": "Raw evidence object store."
+        },
+        "jetstream": {
+          "type": "string",
+          "enum": ["rebuild_from_outbox", "snapshot"],
+          "description": "Whether JetStream is rebuilt from the PostgreSQL outbox or snapshotted."
+        },
+        "openfga": {
+          "type": "string",
+          "enum": ["store_and_tuples"],
+          "description": "Authorization model and tuples are first-class persistence."
+        }
+      }
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "components"],
+      "properties": {
+        "owner": {
+          "type": "string",
+          "enum": ["operator", "platform", "shared"],
+          "description": "Who owns backup scheduling and restore drills."
+        },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "postgres",
+              "s3_manifests",
+              "openfga_model_tuples",
+              "schemas",
+              "config",
+              "secret_refs",
+              "jetstream"
+            ]
+          }
+        },
+        "rpo_minutes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rto_minutes": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compatibility", "auto_migrate_on_start"],
+      "properties": {
+        "compatibility": {
+          "type": "string",
+          "enum": ["N-1"],
+          "description": "Forward migrations only; N-1 schema compatibility required."
+        },
+        "auto_migrate_on_start": {
+          "type": "boolean",
+          "const": false,
+          "description": "Migrations run only via the migrate role; never hidden at serve startup."
+        }
+      }
+    },
+    "secrets_ref": {
+      "type": "string",
+      "description": "Path or URI to a secrets document conforming to secrets.schema.json.",
+      "default": "deploy/schema/secrets.schema.json"
+    }
+  },
+  "$defs": {
+    "connectionMode": {
+      "type": "string",
+      "enum": ["bundled", "external"]
+    },
+    "tlsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "verify": {
+          "type": "boolean",
+          "default": true
+        },
+        "ca_secret_ref": {
+          "type": "string",
+          "description": "Reference into the classified secrets document."
+        },
+        "client_cert_secret_ref": {
+          "type": "string"
+        },
+        "server_name": {
+          "type": "string"
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "scheme": {
+          "type": "string",
+          "enum": ["http", "https", "grpc", "postgres", "nats", "s3"]
+        },
+        "path": {
+          "type": "string"
+        }
+      }
+    },
+    "postgresDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_mode",
+        "endpoint",
+        "tls",
+        "database",
+        "role_secret_ref",
+        "min_version",
+        "required_capabilities"
+      ],
+      "properties": {
+        "connection_mode": { "$ref": "#/$defs/connectionMode" },
+        "endpoint": { "$ref": "#/$defs/endpoint" },
+        "tls": { "$ref": "#/$defs/tlsConfig" },
+        "database": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role_secret_ref": {
+          "type": "string",
+          "description": "Secret ref for the context_gateway DB role credentials."
+        },
+        "admin_secret_ref": {
+          "type": "string",
+          "description": "Optional admin secret for migrate/bootstrap only."
+        },
+        "min_version": {
+          "type": "string",
+          "pattern": "^[0-9]+(\\.[0-9]+)*$"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["pgvector", "rls", "force_rls"]
+          },
+          "uniqueItems": true
+        },
+        "backup_owner": {
+          "type": "string",
+          "enum": ["operator", "platform", "shared"]
+        },
+        "failure_behavior": {
+          "type": "string",
+          "enum": ["fail_closed", "degraded_read_only"],
+          "default": "fail_closed"
+        }
+      }
+    },
+    "s3Dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_mode",
+        "endpoint",
+        "tls",
+        "region",
+        "buckets",
+        "credentials_secret_ref",
+        "min_version",
+        "required_capabilities"
+      ],
+      "properties": {
+        "connection_mode": { "$ref": "#/$defs/connectionMode" },
+        "endpoint": { "$ref": "#/$defs/endpoint" },
+        "tls": { "$ref": "#/$defs/tlsConfig" },
+        "region": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path_style": {
+          "type": "boolean",
+          "default": true
+        },
+        "buckets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["raw", "derived", "quarantine"],
+          "properties": {
+            "raw": { "type": "string", "minLength": 1 },
+            "derived": { "type": "string", "minLength": 1 },
+            "quarantine": { "type": "string", "minLength": 1 }
+          }
+        },
+        "credentials_secret_ref": {
+          "type": "string"
+        },
+        "min_version": {
+          "type": "string"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["s3_versioning", "s3_object_lock", "presigned_put"]
+          },
+          "uniqueItems": true
+        },
+        "backup_owner": {
+          "type": "string",
+          "enum": ["operator", "platform", "shared"]
+        },
+        "failure_behavior": {
+          "type": "string",
+          "enum": ["fail_closed", "degraded_read_only"],
+          "default": "fail_closed"
+        }
+      }
+    },
+    "natsDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_mode",
+        "endpoint",
+        "tls",
+        "jetstream",
+        "credentials_secret_ref",
+        "min_version",
+        "required_capabilities"
+      ],
+      "properties": {
+        "connection_mode": { "$ref": "#/$defs/connectionMode" },
+        "endpoint": { "$ref": "#/$defs/endpoint" },
+        "tls": { "$ref": "#/$defs/tlsConfig" },
+        "jetstream": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["domain", "storage", "replicas"],
+          "properties": {
+            "domain": { "type": "string", "minLength": 1 },
+            "storage": {
+              "type": "string",
+              "enum": ["file", "memory"]
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "credentials_secret_ref": {
+          "type": "string"
+        },
+        "min_version": {
+          "type": "string"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["jetstream_persistence", "durable_consumers", "msg_id"]
+          },
+          "uniqueItems": true
+        },
+        "backup_owner": {
+          "type": "string",
+          "enum": ["operator", "platform", "shared"]
+        },
+        "failure_behavior": {
+          "type": "string",
+          "enum": ["fail_closed", "rebuild_from_outbox"],
+          "default": "rebuild_from_outbox"
+        }
+      }
+    },
+    "openfgaDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_mode",
+        "endpoint",
+        "tls",
+        "store_id_secret_ref",
+        "api_token_secret_ref",
+        "model_id",
+        "min_version",
+        "required_capabilities"
+      ],
+      "properties": {
+        "connection_mode": { "$ref": "#/$defs/connectionMode" },
+        "endpoint": { "$ref": "#/$defs/endpoint" },
+        "tls": { "$ref": "#/$defs/tlsConfig" },
+        "store_id_secret_ref": {
+          "type": "string"
+        },
+        "api_token_secret_ref": {
+          "type": "string"
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Pinned authorization model ID."
+        },
+        "min_version": {
+          "type": "string"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["openfga_store", "higher_consistency", "batch_check"]
+          },
+          "uniqueItems": true
+        },
+        "backup_owner": {
+          "type": "string",
+          "enum": ["operator", "platform", "shared"]
+        },
+        "failure_behavior": {
+          "type": "string",
+          "enum": ["fail_closed"],
+          "default": "fail_closed"
+        }
+      }
+    },
+    "oidcDependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "connection_mode",
+        "issuer",
+        "audience",
+        "tls",
+        "client_secret_ref",
+        "min_version",
+        "required_capabilities"
+      ],
+      "properties": {
+        "connection_mode": { "$ref": "#/$defs/connectionMode" },
+        "issuer": {
+          "type": "string",
+          "format": "uri"
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "discovery_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "jwks_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "tls": { "$ref": "#/$defs/tlsConfig" },
+        "client_id": {
+          "type": "string"
+        },
+        "client_secret_ref": {
+          "type": "string"
+        },
+        "claim_mapping": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "subject": { "type": "string", "default": "sub" },
+            "email": { "type": "string", "default": "email" },
+            "groups": { "type": "string", "default": "groups" },
+            "organization": { "type": "string", "default": "org_id" }
+          }
+        },
+        "min_version": {
+          "type": "string"
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["discovery", "jwks", "issuer_audience"]
+          },
+          "uniqueItems": true
+        },
+        "backup_owner": {
+          "type": "string",
+          "enum": ["operator", "platform", "shared"]
+        },
+        "failure_behavior": {
+          "type": "string",
+          "enum": ["fail_closed"],
+          "default": "fail_closed"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "id": "employee-allow-assigned-case",
+  "description": "Org member who is a support team assignee may read an assigned case for purpose support.",
+  "principal": {
+    "type": "user",
+    "id": "user:dave",
+    "organization_id": "org_acme_0001"
+  },
+  "action": "context.get",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_case_sup_412",
+    "organization_id": "org_acme_0001",
+    "classification": "confidential"
+  },
+  "purpose": "support",
+  "consistency": "min_latency",
+  "expected": {
+    "decision": "allow",
+    "reason_code": "AUTHZ_ALLOW_ASSIGNEE",
+    "redaction_obligations": [
+      {
+        "profile": "support_default",
+        "mask_fields": ["internal_notes.payroll"],
+        "strip_classifications_above": "confidential"
+      }
+    ],
+    "action_restrictions": []
+  }
+}

@@ -1,0 +1,245 @@
+# Context Fabric — demo/starter Compose stack
+# Only the serve role publishes a host port (8080). All dependencies stay on the private network.
+# Copy .env.example to .env and adjust before `docker compose up`.
+
+name: context-fabric
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../postgres/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    expose:
+      - "5432"
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY}
+    volumes:
+      - minio_data:/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    expose:
+      - "9000"
+      - "9001"
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-17T19-35-56Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET_RAW: ${S3_BUCKET_RAW}
+      S3_BUCKET_DERIVED: ${S3_BUCKET_DERIVED}
+      S3_BUCKET_QUARANTINE: ${S3_BUCKET_QUARANTINE}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          if mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}"; then
+            break
+          fi
+          sleep 2
+        done
+        for b in "$${S3_BUCKET_RAW}" "$${S3_BUCKET_DERIVED}" "$${S3_BUCKET_QUARANTINE}"; do
+          mc mb --ignore-existing "local/$${b}"
+          mc version enable "local/$${b}"
+          mc retention set --default GOVERNANCE 30d "local/$${b}" || true
+        done
+    networks:
+      - private
+    restart: "no"
+
+  nats:
+    image: nats:2.10.24-alpine
+    restart: unless-stopped
+    command:
+      - "--js"
+      - "--sd=/data"
+      - "--http_port=8222"
+      - "--name=context-fabric-nats"
+    volumes:
+      - nats_data:/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    expose:
+      - "4222"
+      - "8222"
+
+  openfga-migrate:
+    image: openfga/openfga:v1.8.4
+    command: ["migrate"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/openfga?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - private
+    restart: "no"
+
+  openfga:
+    image: openfga/openfga:v1.8.4
+    restart: unless-stopped
+    command: ["run"]
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/openfga?sslmode=disable
+      OPENFGA_HTTP_ADDR: 0.0.0.0:8080
+      OPENFGA_GRPC_ADDR: 0.0.0.0:8081
+      OPENFGA_PLAYGROUND_ENABLED: "false"
+      OPENFGA_AUTHN_METHOD: none
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openfga-migrate:
+        condition: service_completed_successfully
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=0.0.0.0:8081"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    expose:
+      - "8080"
+      - "8081"
+
+  migrate:
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["migrate"]
+    env_file:
+      - .env
+    environment:
+      CONTEXT_FABRIC_ROLE: migrate
+      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-starter}
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - private
+    restart: "no"
+
+  serve:
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["serve"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CONTEXT_FABRIC_ROLE: serve
+      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-starter}
+      CONTEXT_FABRIC_LISTEN_ADDR: ":8080"
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      NATS_URL: nats://nats:4222
+      OPENFGA_API_URL: http://openfga:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      openfga:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      - private
+    ports:
+      - "${SERVE_PUBLIC_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  worker:
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    command: ["worker"]
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CONTEXT_FABRIC_ROLE: worker
+      CONTEXT_FABRIC_PROFILE: ${CONTEXT_FABRIC_PROFILE:-starter}
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      NATS_URL: nats://nats:4222
+      OPENFGA_API_URL: http://openfga:8080
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      openfga:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    networks:
+      - private
+    # No host ports — worker stays private.
+
+networks:
+  private:
+    driver: bridge
+    internal: false
+    name: context-fabric-private
+
+volumes:
+  postgres_data:
+  minio_data:
+  nats_data:

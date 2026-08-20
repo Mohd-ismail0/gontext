@@ -1,0 +1,28 @@
+{
+  "id": "employee-deny-restricted-note",
+  "description": "Ordinary member without restricted_reader cannot read a restricted note even when they can read the parent case.",
+  "principal": {
+    "type": "user",
+    "id": "user:bob",
+    "organization_id": "org_acme_0001"
+  },
+  "action": "context.get",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_note_restricted_009",
+    "organization_id": "org_acme_0001",
+    "classification": "restricted"
+  },
+  "purpose": "support",
+  "consistency": "fully_consistent",
+  "expected": {
+    "decision": "deny",
+    "reason_code": "AUTHZ_DENY_RESTRICTED",
+    "redaction_obligations": [],
+    "action_restrictions": ["context.get", "context.brief"],
+    "must_not_disclose": [
+      "resource_exists_hint",
+      "denied_resource_metadata"
+    ]
+  }
+}

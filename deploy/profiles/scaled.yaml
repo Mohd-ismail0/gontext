@@ -1,0 +1,166 @@
+apiVersion: context-fabric.io/v1
+kind: DeploymentConfig
+metadata:
+  name: context-fabric-scaled
+  version: 1.0.0
+  description: Kubernetes scaled profile with independently scalable roles and fully external managed dependencies.
+profile: scaled
+roles:
+  - serve
+  - worker
+  - connector
+  - migrate
+  - bootstrap
+  - doctor
+  - backup
+  - restore
+  - reconcile
+image:
+  repository: ghcr.io/xsama/context-fabric
+  tag: "1.0.0"
+  pullPolicy: IfNotPresent
+network:
+  public_surface:
+    - serve
+  private_dependencies: true
+  serve_listen_addr: ":8080"
+  serve_public_port: 8080
+dependencies:
+  postgres:
+    connection_mode: external
+    endpoint:
+      host: postgres.context-fabric.svc.cluster.local
+      port: 5432
+      scheme: postgres
+    tls:
+      enabled: true
+      verify: true
+      ca_secret_ref: postgres.ca
+      server_name: postgres.context-fabric.svc.cluster.local
+    database: context_fabric
+    role_secret_ref: postgres.context_gateway
+    admin_secret_ref: postgres.admin
+    min_version: "16"
+    required_capabilities:
+      - pgvector
+      - rls
+      - force_rls
+    backup_owner: operator
+    failure_behavior: fail_closed
+  s3:
+    connection_mode: external
+    endpoint:
+      host: s3.amazonaws.com
+      port: 443
+      scheme: https
+    tls:
+      enabled: true
+      verify: true
+    region: us-east-1
+    path_style: false
+    buckets:
+      raw: context-fabric-raw
+      derived: context-fabric-derived
+      quarantine: context-fabric-quarantine
+    credentials_secret_ref: s3.access
+    min_version: "2006-03-01"
+    required_capabilities:
+      - s3_versioning
+      - s3_object_lock
+      - presigned_put
+    backup_owner: operator
+    failure_behavior: fail_closed
+  nats:
+    connection_mode: external
+    endpoint:
+      host: nats.context-fabric.svc.cluster.local
+      port: 4222
+      scheme: nats
+    tls:
+      enabled: true
+      verify: true
+      ca_secret_ref: nats.ca
+      client_cert_secret_ref: nats.client_tls
+      server_name: nats.context-fabric.svc.cluster.local
+    jetstream:
+      domain: context-fabric-scaled
+      storage: file
+      replicas: 3
+    credentials_secret_ref: nats.credentials
+    min_version: "2.10.0"
+    required_capabilities:
+      - jetstream_persistence
+      - durable_consumers
+      - msg_id
+    backup_owner: operator
+    failure_behavior: rebuild_from_outbox
+  openfga:
+    connection_mode: external
+    endpoint:
+      host: openfga.context-fabric.svc.cluster.local
+      port: 8080
+      scheme: https
+    tls:
+      enabled: true
+      verify: true
+      ca_secret_ref: openfga.ca
+      server_name: openfga.context-fabric.svc.cluster.local
+    store_id_secret_ref: openfga.store_id
+    api_token_secret_ref: openfga.api_token
+    model_id: scaled-model-v1
+    min_version: "1.5.0"
+    required_capabilities:
+      - openfga_store
+      - higher_consistency
+      - batch_check
+    backup_owner: operator
+    failure_behavior: fail_closed
+  oidc:
+    connection_mode: external
+    issuer: https://login.example.com/
+    audience: https://context-fabric.example.com
+    discovery_url: https://login.example.com/.well-known/openid-configuration
+    jwks_url: https://login.example.com/oauth2/v1/keys
+    tls:
+      enabled: true
+      verify: true
+    client_id: context-fabric-scaled
+    client_secret_ref: oidc.client_secret
+    claim_mapping:
+      subject: sub
+      email: email
+      groups: groups
+      organization: org_id
+    min_version: "1.0"
+    required_capabilities:
+      - discovery
+      - jwks
+      - issuer_audience
+    backup_owner: operator
+    failure_behavior: fail_closed
+capabilities:
+  pgvector: true
+  jetstream_persistence: true
+  s3_versioning: true
+  s3_object_lock: true
+  openfga_store: true
+persistence:
+  ledger: postgres
+  evidence: s3
+  jetstream: rebuild_from_outbox
+  openfga: store_and_tuples
+backup:
+  owner: operator
+  components:
+    - postgres
+    - s3_manifests
+    - openfga_model_tuples
+    - schemas
+    - config
+    - secret_refs
+  rpo_minutes: 5
+  rto_minutes: 30
+migration:
+  compatibility: N-1
+  auto_migrate_on_start: false
+secrets_ref: deploy/schema/secrets.schema.json

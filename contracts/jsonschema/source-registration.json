@@ -1,0 +1,200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/source-registration.json",
+  "title": "SourceRegistration",
+  "description": "Source registration fixes organization, allowed record types, trust/authority ceilings, retention/classification defaults, visibility-mapping policy, signing method, rate quota, and schema versions. Client fields may only narrow these controls.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_id",
+    "organization_id",
+    "display_name",
+    "status",
+    "allowed_record_types",
+    "trust_ceiling",
+    "authority_ceiling",
+    "classification_default",
+    "retention_policy_id",
+    "visibility_mapping_policy",
+    "signing",
+    "rate_quota",
+    "schema_versions"
+  ],
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "organization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1024
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending_verification",
+        "active",
+        "paused",
+        "revoked"
+      ]
+    },
+    "allowed_record_types": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "message",
+          "fact",
+          "artifact",
+          "event",
+          "observation",
+          "document"
+        ]
+      }
+    },
+    "trust_ceiling": {
+      "$ref": "taxonomy.json#/properties/trust"
+    },
+    "authority_ceiling": {
+      "$ref": "taxonomy.json#/properties/authority"
+    },
+    "classification_default": {
+      "$ref": "taxonomy.json#/properties/classification"
+    },
+    "retention_policy_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "visibility_mapping_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "allowed_visibility_refs"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["fixed_ref", "mapped_enum", "deny_by_default"]
+        },
+        "allowed_visibility_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "default_visibility_ref": {
+          "type": "string"
+        }
+      }
+    },
+    "signing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method"],
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": ["hmac_sha256", "ed25519", "oidc_jwt"]
+        },
+        "key_id": {
+          "type": "string"
+        },
+        "secret_ref": {
+          "type": "string",
+          "description": "Reference to secret store; never the secret value."
+        },
+        "replay_window_seconds": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 86400,
+          "default": 300
+        }
+      }
+    },
+    "rate_quota": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["events_per_minute", "bytes_per_minute"],
+      "properties": {
+        "events_per_minute": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "bytes_per_minute": {
+          "type": "integer",
+          "minimum": 1024
+        },
+        "max_batch_size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "default": 100
+        }
+      }
+    },
+    "schema_versions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["schema_id", "version"],
+        "properties": {
+          "schema_id": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "mapping_spec_id": {
+            "type": "string"
+          },
+          "mapping_spec_revision": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "active_mapping_spec_id": {
+      "type": ["string", "null"]
+    },
+    "active_mapping_spec_revision": {
+      "type": ["string", "null"]
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "last_verified_at": {
+          "type": ["string", "null"],
+          "format": "date-time"
+        },
+        "last_status": {
+          "type": "string",
+          "enum": ["ok", "failed", "never"]
+        },
+        "detail_reason_code": {
+          "type": ["string", "null"]
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

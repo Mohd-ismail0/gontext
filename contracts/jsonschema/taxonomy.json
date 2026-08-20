@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/taxonomy.json",
+  "title": "Taxonomy",
+  "description": "Controlled vocabularies for Context Fabric v1. Free/search tags are not part of this schema and never grant access.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "domain",
+    "classification",
+    "trust",
+    "authority",
+    "purpose",
+    "retention"
+  ],
+  "properties": {
+    "domain": {
+      "type": "string",
+      "enum": ["support", "sales", "finance", "engineering", "hr"]
+    },
+    "classification": {
+      "type": "string",
+      "enum": ["public", "internal", "confidential", "restricted"],
+      "description": "Ordered ceiling: public < internal < confidential < restricted."
+    },
+    "trust": {
+      "type": "string",
+      "enum": [
+        "trusted_system",
+        "trusted_internal",
+        "untrusted_external",
+        "generated"
+      ]
+    },
+    "authority": {
+      "type": "string",
+      "enum": [
+        "source_of_truth",
+        "corroborating",
+        "user_claim",
+        "inferred"
+      ]
+    },
+    "purpose": {
+      "type": "string",
+      "enum": [
+        "support",
+        "account_management",
+        "marketing",
+        "finance",
+        "agent_assist"
+      ]
+    },
+    "retention": {
+      "type": "string",
+      "enum": ["30d", "24m", "legal_hold", "indefinite_policy"]
+    },
+    "controlled_tag_prefixes": {
+      "type": "array",
+      "description": "Allowed prefixes for controlled taxonomy tags. Display tags such as brand:xsama never establish tenancy or visibility.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "domain:",
+          "source:",
+          "channel:",
+          "topic:",
+          "brand:",
+          "case_type:"
+        ]
+      },
+      "uniqueItems": true
+    }
+  }
+}

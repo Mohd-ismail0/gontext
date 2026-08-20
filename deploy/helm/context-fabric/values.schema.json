@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.io/schemas/helm-values/v1.json",
+  "title": "ContextFabricHelmValues",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile", "image", "dependencies", "serve", "worker", "config"],
+  "properties": {
+    "profile": {
+      "type": "string",
+      "enum": ["demo", "starter", "xsama", "scaled"]
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "tag", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "pullPolicy": {
+          "type": "string",
+          "enum": ["IfNotPresent", "Always", "Never"]
+        },
+        "digest": { "type": "string" }
+      }
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": { "type": "string" },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" },
+        "annotations": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["listenAddr", "logLevel", "openfgaModelId", "capabilities"],
+      "properties": {
+        "listenAddr": { "type": "string", "minLength": 1 },
+        "logLevel": {
+          "type": "string",
+          "enum": ["debug", "info", "warn", "error"]
+        },
+        "openfgaModelId": { "type": "string", "minLength": 1 },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pgvector",
+            "jetstream_persistence",
+            "s3_versioning",
+            "s3_object_lock",
+            "openfga_store"
+          ],
+          "properties": {
+            "pgvector": { "type": "boolean" },
+            "jetstream_persistence": { "type": "boolean" },
+            "s3_versioning": { "type": "boolean" },
+            "s3_object_lock": { "type": "boolean" },
+            "openfga_store": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "serve": { "$ref": "#/$defs/roleWorkload" },
+    "worker": {
+      "allOf": [
+        { "$ref": "#/$defs/roleWorkload" },
+        {
+          "type": "object",
+          "properties": {
+            "service": { "not": {} }
+          }
+        }
+      ]
+    },
+    "migrate": { "$ref": "#/$defs/jobSpec" },
+    "bootstrap": { "$ref": "#/$defs/jobSpec" },
+    "dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgres", "s3", "nats", "openfga", "oidc"],
+      "properties": {
+        "postgres": {
+          "type": "object",
+          "required": ["connectionMode", "host", "port", "database", "existingSecret"],
+          "properties": {
+            "connectionMode": { "type": "string", "enum": ["bundled", "external"] },
+            "host": { "type": "string", "minLength": 1 },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "database": { "type": "string", "minLength": 1 },
+            "sslMode": { "type": "string" },
+            "existingSecret": { "type": "string", "minLength": 1 },
+            "gatewayUserKey": { "type": "string" },
+            "gatewayPasswordKey": { "type": "string" },
+            "adminPasswordKey": { "type": "string" },
+            "bundled": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "image": { "type": "string" },
+                "storage": { "type": "string" }
+              }
+            }
+          }
+        },
+        "s3": {
+          "type": "object",
+          "required": ["connectionMode", "endpoint", "region", "buckets", "existingSecret"],
+          "properties": {
+            "connectionMode": { "type": "string", "enum": ["bundled", "external"] },
+            "endpoint": { "type": "string", "minLength": 1 },
+            "region": { "type": "string", "minLength": 1 },
+            "pathStyle": { "type": "boolean" },
+            "buckets": {
+              "type": "object",
+              "required": ["raw", "derived", "quarantine"],
+              "properties": {
+                "raw": { "type": "string" },
+                "derived": { "type": "string" },
+                "quarantine": { "type": "string" }
+              }
+            },
+            "existingSecret": { "type": "string" },
+            "accessKeyKey": { "type": "string" },
+            "secretKeyKey": { "type": "string" },
+            "bundled": {
+              "type": "object",
+              "properties": { "enabled": { "type": "boolean" } }
+            }
+          }
+        },
+        "nats": {
+          "type": "object",
+          "required": ["connectionMode", "url", "domain", "existingSecret"],
+          "properties": {
+            "connectionMode": { "type": "string", "enum": ["bundled", "external"] },
+            "url": { "type": "string", "minLength": 1 },
+            "domain": { "type": "string", "minLength": 1 },
+            "existingSecret": { "type": "string" },
+            "credentialsKey": { "type": "string" },
+            "bundled": {
+              "type": "object",
+              "properties": { "enabled": { "type": "boolean" } }
+            }
+          }
+        },
+        "openfga": {
+          "type": "object",
+          "required": ["connectionMode", "apiUrl", "existingSecret"],
+          "properties": {
+            "connectionMode": { "type": "string", "enum": ["bundled", "external"] },
+            "apiUrl": { "type": "string", "minLength": 1 },
+            "existingSecret": { "type": "string" },
+            "apiTokenKey": { "type": "string" },
+            "storeIdKey": { "type": "string" },
+            "bundled": {
+              "type": "object",
+              "properties": { "enabled": { "type": "boolean" } }
+            }
+          }
+        },
+        "oidc": {
+          "type": "object",
+          "required": ["connectionMode", "issuer", "audience", "clientId", "existingSecret"],
+          "properties": {
+            "connectionMode": { "type": "string", "enum": ["bundled", "external"] },
+            "issuer": { "type": "string", "minLength": 1 },
+            "audience": { "type": "string", "minLength": 1 },
+            "clientId": { "type": "string", "minLength": 1 },
+            "discoveryUrl": { "type": "string" },
+            "jwksUrl": { "type": "string" },
+            "existingSecret": { "type": "string" },
+            "clientSecretKey": { "type": "string" }
+          }
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "properties": {
+        "publicSurface": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["serve"] }
+        },
+        "privateDependencies": { "type": "boolean" }
+      }
+    },
+    "podSecurityContext": { "type": "object" },
+    "securityContext": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" }
+  },
+  "$defs": {
+    "roleWorkload": {
+      "type": "object",
+      "required": ["enabled", "replicaCount"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "replicaCount": { "type": "integer", "minimum": 0 },
+        "resources": { "type": "object" },
+        "podDisruptionBudget": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "minAvailable": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+          }
+        },
+        "probes": {
+          "type": "object",
+          "properties": {
+            "startup": { "$ref": "#/$defs/probe" },
+            "liveness": { "$ref": "#/$defs/probe" },
+            "readiness": { "$ref": "#/$defs/probe" }
+          }
+        }
+      }
+    },
+    "probe": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "periodSeconds": { "type": "integer", "minimum": 1 },
+        "failureThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "jobSpec": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "ttlSecondsAfterFinished": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

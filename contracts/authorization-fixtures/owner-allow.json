@@ -1,0 +1,30 @@
+{
+  "id": "owner-allow-restricted-note",
+  "description": "Resource owner with restricted_reader may read restricted notes under their case.",
+  "principal": {
+    "type": "user",
+    "id": "user:alice",
+    "organization_id": "org_acme_0001"
+  },
+  "action": "context.get",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_note_restricted_009",
+    "organization_id": "org_acme_0001",
+    "classification": "restricted"
+  },
+  "purpose": "support",
+  "consistency": "fully_consistent",
+  "expected": {
+    "decision": "allow",
+    "reason_code": "AUTHZ_ALLOW_RESTRICTED_READER",
+    "redaction_obligations": [
+      {
+        "profile": "restricted_owner",
+        "mask_fields": ["secrets", "credentials"],
+        "strip_classifications_above": "restricted"
+      }
+    ],
+    "action_restrictions": []
+  }
+}

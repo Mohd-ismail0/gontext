@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/delegation-grant.json",
+  "title": "DelegationGrant",
+  "description": "Bounded, revocable agent delegation. Effective access is the intersection of agent baseline, active grant, creator/owner current authority, relationship authz, and contextual policy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "grant_id",
+    "agent_principal",
+    "subject",
+    "actor",
+    "owner",
+    "runtime",
+    "created_by",
+    "allowed_actions",
+    "resource_selector",
+    "purpose_allowlist",
+    "classification_ceiling",
+    "expires_at",
+    "status"
+  ],
+  "properties": {
+    "grant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "organization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agent_principal": {
+      "type": "string",
+      "pattern": "^agent:[A-Za-z0-9._:-]+$"
+    },
+    "subject": {
+      "type": "string",
+      "description": "Human or service whose current authority bounds the work.",
+      "pattern": "^(user|service):.+$"
+    },
+    "actor": {
+      "type": "string",
+      "description": "Agent principal executing the work.",
+      "pattern": "^agent:.+$"
+    },
+    "owner": {
+      "type": "string",
+      "description": "Team or organization steward for agent lifecycle.",
+      "pattern": "^(team|organization):.+$"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "Separately authenticated worker/container identity.",
+      "pattern": "^runtime:.+$"
+    },
+    "created_by": {
+      "type": "string",
+      "pattern": "^user:.+$"
+    },
+    "allowed_actions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "context.search",
+          "context.get",
+          "context.brief",
+          "context.request_access"
+        ]
+      },
+      "description": "V1 read-only actions. Write/send actions are out of v1."
+    },
+    "resource_selector": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^(organization|team|brand|resource):.+$"
+      },
+      "uniqueItems": true
+    },
+    "purpose_allowlist": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "taxonomy.json#/properties/purpose"
+      }
+    },
+    "classification_ceiling": {
+      "$ref": "taxonomy.json#/properties/classification"
+    },
+    "send_policy": {
+      "type": "string",
+      "enum": ["denied", "human_approval_required"],
+      "default": "denied"
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_requests_per_day": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_tokens_per_request": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "revoked_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "revoked", "expired"]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

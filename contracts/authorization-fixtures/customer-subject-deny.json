@@ -1,0 +1,31 @@
+{
+  "id": "customer-subject-deny-fixture-only",
+  "description": "Customer subject fixture for matrix completeness. Customer-facing REST/MCP authentication is out of v1 (ADR 0012); live adapters must reject this principal type.",
+  "fixture_only": true,
+  "principal": {
+    "type": "customer",
+    "id": "customer:cust_acme_99",
+    "organization_id": "org_acme_0001"
+  },
+  "action": "context.search",
+  "resource": {
+    "type": "resource",
+    "id": "resource:res_case_sup_412",
+    "organization_id": "org_acme_0001",
+    "classification": "confidential"
+  },
+  "purpose": "support",
+  "consistency": "fully_consistent",
+  "expected": {
+    "decision": "deny",
+    "reason_code": "AUTHN_PRINCIPAL_TYPE_UNSUPPORTED",
+    "redaction_obligations": [],
+    "action_restrictions": [
+      "context.search",
+      "context.get",
+      "context.brief",
+      "context.request_access"
+    ],
+    "notes": "Do not enable customer callers until a later product gate."
+  }
+}

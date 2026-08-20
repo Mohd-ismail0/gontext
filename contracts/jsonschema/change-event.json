@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://context-fabric.dev/schemas/change-event.json",
+  "title": "ChangeEvent",
+  "description": "Public lifecycle change event for cursor feed and webhooks. Opaque IDs, revision/state, schema/profile versions, and cursor only—never content, vectors, prompts, or authorization tuples. Consumers hydrate via authorized search/get/brief.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "organization_id",
+    "cursor",
+    "occurred_at",
+    "change_type",
+    "resource_id",
+    "revision_id",
+    "lifecycle_state",
+    "schema_version",
+    "profile_version"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable idempotency key for receivers."
+    },
+    "organization_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Monotonic organization-scoped cursor. No global order promise."
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "change_type": {
+      "type": "string",
+      "enum": [
+        "resource.accepted",
+        "resource.indexed",
+        "resource.reclassified",
+        "resource.tombstoned",
+        "resource.purged",
+        "resource.failed"
+      ]
+    },
+    "context_space_id": {
+      "type": "string"
+    },
+    "resource_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "revision_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "lifecycle_state": {
+      "type": "string",
+      "enum": [
+        "ACCEPTED",
+        "PROJECTING",
+        "INDEXED",
+        "FAILED",
+        "RECLASSIFIED",
+        "TOMBSTONED",
+        "PURGE_PENDING",
+        "PURGED"
+      ]
+    },
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Retrieval/redaction/chunk profile version applicable to hydration."
+    },
+    "brand_id": {
+      "type": ["string", "null"]
+    },
+    "source_id": {
+      "type": ["string", "null"]
+    }
+  },
+  "not": {
+    "anyOf": [
+      {
+        "required": ["content"]
+      },
+      {
+        "required": ["vector"]
+      },
+      {
+        "required": ["embedding"]
+      },
+      {
+        "required": ["prompt"]
+      },
+      {
+        "required": ["authorization_tuples"]
+      }
+    ]
+  }
+}
