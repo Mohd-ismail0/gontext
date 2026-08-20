@@ -83,7 +83,7 @@ type OIDCConfig struct {
 // Load reads configuration from the process environment.
 func Load() (Config, error) {
 	cfg := Config{
-		Profile:      firstEnv("demo", "PROFILE", "CONTEXT_FABRIC_PROFILE"),
+		Profile:      firstEnv("starter", "PROFILE", "CONTEXT_FABRIC_PROFILE"),
 		ListenAddr:   firstEnv(":8080", "LISTEN_ADDR", "CONTEXT_FABRIC_LISTEN_ADDR"),
 		LogLevel:     firstEnv("info", "LOG_LEVEL", "CONTEXT_FABRIC_LOG_LEVEL"),
 		AuthzModelID: firstEnv("", "AUTHZ_MODEL_ID", "OPENFGA_MODEL_ID"),
@@ -174,18 +174,18 @@ func (c Config) Validate() error {
 	if err := require("S3_SECRET_ACCESS_KEY", c.S3.SecretAccessKey); err != nil {
 		return err
 	}
-	if err := require("OPENFGA_API_URL", c.OpenFGA.APIURL); err != nil {
-		return err
-	}
-	if err := require("AUTHZ_MODEL_ID / OPENFGA_MODEL_ID", c.AuthzModelID); err != nil {
-		return err
-	}
 
 	switch profile {
 	case "demo":
-		// Bundled OIDC optional when using local authn adapter.
+		// Demo may use Local identity + in-memory OpenFGA; store/model pins optional.
 		return nil
 	case "starter", "xsama", "scaled":
+		if err := require("OPENFGA_API_URL", c.OpenFGA.APIURL); err != nil {
+			return err
+		}
+		if err := require("AUTHZ_MODEL_ID / OPENFGA_MODEL_ID", c.AuthzModelID); err != nil {
+			return err
+		}
 		if err := require("OIDC_ISSUER", c.OIDC.Issuer); err != nil {
 			return err
 		}
@@ -216,7 +216,7 @@ func (c Config) Validate() error {
 }
 
 func defaultMode() ConnectionMode {
-	p := strings.ToLower(firstEnv("demo", "PROFILE", "CONTEXT_FABRIC_PROFILE"))
+	p := strings.ToLower(firstEnv("starter", "PROFILE", "CONTEXT_FABRIC_PROFILE"))
 	if p == "scaled" {
 		return ConnectionExternal
 	}

@@ -367,9 +367,9 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		}
 	}
 
-	changeFeed := changes.New(feedStore, nil)
+	changeFeed := changes.New(feedStore, webhookSigningSecret())
 	if feedStore == nil && changesL != nil {
-		changeFeed = changes.New(changesL, nil)
+		changeFeed = changes.New(changesL, webhookSigningSecret())
 	}
 	delSvc := &deletion.Service{
 		Ledger: ledger, Evidence: evidence, Index: index, Authz: authz,
@@ -742,6 +742,14 @@ func firstNonEmpty(vals ...string) string {
 		}
 	}
 	return ""
+}
+
+func webhookSigningSecret() []byte {
+	s := strings.TrimSpace(os.Getenv("WEBHOOK_SIGNING_SECRET"))
+	if s == "" {
+		return nil
+	}
+	return []byte(s)
 }
 
 func firstEnv(keys ...string) string {

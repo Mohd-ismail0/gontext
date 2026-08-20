@@ -75,9 +75,9 @@ data:
         endpoint:
           host: {{ .Values.dependencies.openfga.apiUrl | quote }}
           port: 8080
-          scheme: https
+          scheme: http
         tls:
-          enabled: true
+          enabled: false
           verify: true
         store_id_secret_ref: openfga.store_id
         api_token_secret_ref: openfga.api_token

@@ -527,6 +527,7 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 			}}); err != nil {
 				return nil, platform.ErrUnavailable("index upsert failed: " + err.Error())
 			}
+			seedMemoryAuthzResource(s.Authz, orgID, result.ResourceID, principal)
 		}
 	}
 
@@ -941,6 +942,7 @@ func (s *ApplicationService) Bootstrap(ctx context.Context, creds ports.Credenti
 			return nil, err
 		}
 	}
+	seedMemoryAuthzOrg(s.Authz, orgID, principal)
 	return map[string]any{"organization_id": orgID, "name": name, "status": "ready"}, nil
 }
 
@@ -1131,4 +1133,50 @@ func joinComma(parts []string) string {
 		out += "," + parts[i]
 	}
 	return out
+}
+
+// memoryAuthzSeeder is implemented by in-process OpenFGA (demo/tests).
+type memoryAuthzSeeder interface {
+	AddOrgMember(orgID, subject string)
+	Grant(object, relation, subject string)
+}
+
+func principalSubject(p ports.Principal) string {
+	if strings.TrimSpace(p.Subject) != "" {
+		return strings.TrimSpace(p.Subject)
+	}
+	return strings.TrimSpace(p.ID)
+}
+
+func seedMemoryAuthzOrg(authz ports.AuthorizationProvider, orgID string, p ports.Principal) {
+	m, ok := authz.(memoryAuthzSeeder)
+	if !ok {
+		return
+	}
+	subj := principalSubject(p)
+	if subj == "" {
+		return
+	}
+	m.AddOrgMember(orgID, subj)
+	m.AddOrgMember(orgID, "user:"+subj)
+	m.Grant("organization:"+orgID, "member", "user:"+subj)
+	m.Grant("organization:"+orgID, "manager", "user:"+subj)
+}
+
+func seedMemoryAuthzResource(authz ports.AuthorizationProvider, orgID, resourceID string, p ports.Principal) {
+	m, ok := authz.(memoryAuthzSeeder)
+	if !ok || resourceID == "" {
+		return
+	}
+	subj := principalSubject(p)
+	if subj == "" {
+		return
+	}
+	user := "user:" + subj
+	m.AddOrgMember(orgID, subj)
+	m.AddOrgMember(orgID, user)
+	m.Grant("resource:"+resourceID, "organization", "organization:"+orgID)
+	m.Grant("resource:"+resourceID, "owner", user)
+	m.Grant("resource:"+resourceID, "can_read", user)
+	m.Grant("resource:"+resourceID, "can_delete", user)
 }
