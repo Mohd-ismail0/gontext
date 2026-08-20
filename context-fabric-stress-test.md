@@ -1,4 +1,16 @@
-# Context Fabric — Stress Test and Plugin-First Architecture
+# Context Fabric — Authoritative Reference Architecture
+
+**Status:** Final consolidated architecture decision. This is the sole authoritative
+design document for the repository. It incorporates the platform survey, ingestion
+architecture, security/governance review, strategic recommendation, stress test,
+and independent review. Where an implementation choice is profile-specific, this
+document says so explicitly; derived indexes, brokers, parsers, and policy engines
+are replaceable adapters rather than universal product requirements.
+
+**Scope:** A self-hosted, multi-tenant organizational context platform for customer
+and internal sources, durable ingestion, provenance, governed employee/agent
+retrieval over REST and MCP, redaction, deletion, and audit. It is an architecture
+decision, not a claim that deployment has occurred.
 
 ## Decision
 
@@ -8,7 +20,7 @@ The platform should provide one canonical ingestion API, one retrieval API, one 
 
 The current XSAMA deployment may use Logto, but **Logto must be configuration, not a code dependency**. A generic OIDC provider adapter should work with Logto, Keycloak, Authentik, Entra ID, Okta, and compliant enterprise IdPs through discovery, JWKS validation, issuer/audience checks, and configurable claim mapping. OpenID Connect is an identity layer on OAuth 2.0, while SCIM is the standard HTTP protocol for cross-domain identity lifecycle management.[2][3]
 
-## Critical corrections to the earlier proposal
+## Architecture invariants
 
 1. **Tags are not authorization.** Tags classify and narrow a search; they never grant visibility. The gateway compiles mandatory tenant, context-space, purpose, classification, retention, and authorization filters before any lexical/vector candidate is hydrated. The caller-supplied tag query is only an additional `AND` constraint.
 2. **An API key is a credential, not an identity or permission set.** It resolves to a platform principal such as `agent:...`, whose effective rights are evaluated at request time.
@@ -131,6 +143,21 @@ Use three tag classes:
 | **System scope** | `organization_id`, `context_space_id`, classification, retention, trust | No; gateway/policy controlled |
 | **Controlled taxonomy** | domain, source, channel, topic, brand, case type | Only via authorized workflow |
 | **Free/search tags** | analyst convenience labels | Never |
+
+The initial controlled vocabulary is:
+
+```text
+domain: support | sales | finance | engineering | HR
+classification: public | internal | confidential | restricted
+trust: trusted_system | trusted_internal | untrusted_external | generated
+authority: source_of_truth | corroborating | user_claim | inferred
+purpose: support | account_management | marketing | finance | agent_assist
+retention: 30d | 24m | legal_hold | indefinite_policy
+```
+
+Treat `brand` as a governed organization child/scope where deployments operate
+multiple brands. Tags guide policy, retrieval, retention, and redaction, but never
+grant access.
 
 ## Shared identity for employees and agents
 
@@ -427,7 +454,7 @@ OpenMetadata and DataHub offer useful connector, lineage, source/sink, and gover
 
 Airbyte, NiFi, and Redpanda Connect can accelerate some batch/stream connectors, but should be optional edge ingestion tools rather than the place where context authorization, canonical semantics, or agent retrieval is enforced.[31][32][33]
 
-## Recommended deployment profiles
+## Starter and XSAMA profile details
 
 ### Starter profile: portable, small organization
 
@@ -472,7 +499,7 @@ Do not expose PostgreSQL, object storage, NATS, OpenFGA, or derived indexes publ
 9. **Load/SLO test**: bounded latency and no cross-tenant leak under concurrent retrieval and ingestion.
 10. **Restore drill**: recover ledger, evidence mappings, policy revision, and indexes from backup, then verify integrity.
 
-## Final recommendation
+## Product boundary summary
 
 Proceed with a product-shaped **Context Fabric monorepo** whose hard boundaries are:
 
@@ -487,9 +514,10 @@ many replaceable adapters and isolated plug-ins
 
 Use the existing Logto deployment through the generic OIDC configuration today, but treat all identity, authorization, storage, eventing, indexing, and parsing components as provider plugins. Employees and agents should share the same infrastructure, but agents must operate as independent principals with bounded delegated authority—not as copies of the people who created them.
 
-## Independent-review reconciliation
+## Resolved implementation decisions
 
-Three independent reviews reinforced the core design, but require several important adjustments before this becomes a build specification.
+The following decisions resolve the final profile, identity, consistency, deletion,
+parser, and telemetry details. They are normative.
 
 ### 1. Ship deployment profiles, not one mandatory infrastructure stack
 
@@ -503,7 +531,7 @@ The product contract remains provider-neutral. The reference deployment must not
 
 For XSAMA's first controlled implementation, retain the starter profile: NATS JetStream and pgvector, with a strict event-bus/index adapter boundary. Do **not** make NATS or pgvector a product assumption. JetStream supplies durable streams, replay and at-least-once consumption; Kafka is the stronger default for deployments whose primary requirements are long replay, CDC, and a large connector ecosystem.[4][40]
 
-The authoritative ledger stays PostgreSQL and raw evidence stays S3-compatible object storage in every profile. Search/vector systems are rebuildable projections only. OpenSearch becomes the reference scaled retrieval adapter because it combines lexical, semantic, and hybrid ranking; Qdrant remains a payload-filtered vector adapter, not an authorization authority.[25][28]
+The authoritative ledger stays PostgreSQL and raw evidence stays S3-compatible object storage in every profile. Search/vector systems are rebuildable projections only. OpenSearch becomes the reference scaled retrieval adapter because it combines lexical, semantic, and hybrid ranking; Qdrant remains a payload-filtered vector adapter, not an authorization authority.[25][41]
 
 ### 2. The canonical "creator" model is insufficient by itself
 
@@ -571,6 +599,398 @@ Do not ingest production-wide organizational history or enable autonomous agent 
 • a complete disclosure decision can be reconstructed without logging plaintext sensitive context
 ```
 
+## Canonical records, identifiers, and state
+
+Keep four identities separate:
+
+1. `resource_id` identifies the stable logical resource (case, conversation,
+   document, account, or person).
+2. `revision_id` identifies one immutable observed version of that resource.
+3. `artifact_id` plus `derivation_id` identifies an extraction, redaction,
+   element set, chunk set, embedding generation, summary, or graph projection.
+4. `event_id` identifies one immutable lifecycle fact or processing attempt.
+
+Use UUIDv7/ULID event IDs. External URLs, mutable timestamps, source IDs, and
+chunk IDs are not global event identities. Deterministic IDs are appropriate only
+for replay-safe projections, for example:
+
+```text
+chunk_id = hash(
+  revision_id,
+  extraction_profile,
+  element_locator,
+  chunk_profile,
+  ordinal
+)
+```
+
+The canonical model includes organization, context space, principal, group,
+resource, revision, evidence artifact, derived artifact, chunk, embedding
+generation, context event, access relationship, delegation grant, policy decision,
+audit event, ingestion job, and derivative manifest. Preserve both `valid_time`
+(when the source says a fact applied) and `system_time` (when the platform observed
+or processed it).
+
+Every derived record carries at least:
+
+```text
+organization_id, context_space_id, resource_id, revision_id,
+source_event_id, evidence object version + SHA-256,
+extractor/chunker/embedder/model/profile versions,
+policy/redaction version, authorization object reference,
+trust, source authority, classification, allowed purpose,
+confidence, review state, superseded/tombstoned/deleted state
+```
+
+The canonical lifecycle is:
+
+```text
+RECEIVED → VALIDATED → QUARANTINED | ACCEPTED
+ACCEPTED → PROJECTING → INDEXED | FAILED
+INDEXED → RECLASSIFIED | TOMBSTONED
+TOMBSTONED → PURGE_PENDING → PURGED
+```
+
+Transitions are append-only. A tombstone or access revocation dominates an older
+upsert after retries, replay, reconciliation, or restore.
+
+## Deployment profiles and component authority
+
+The product contract is provider-neutral; deployments choose a coherent profile:
+
+| Profile | Durable event adapter | Retrieval projection | Intended use |
+|---|---|---|---|
+| Starter / XSAMA first slice | NATS JetStream | PostgreSQL + pgvector | Lowest operational overhead, modest corpus/connectors |
+| Enterprise replay / CDC | Kafka KRaft + Debezium + Apicurio | OpenSearch hybrid search | Long replay, high-volume CDC, many consumers/connectors |
+| Vector specialist | Either durable adapter | Qdrant plus lexical provider | Dense retrieval is a measured bottleneck |
+| Analytics-heavy extension | Existing profile bus | ClickHouse analytics and optional retrieval experiment | High-volume audit/timeline analysis; never canonical |
+
+PostgreSQL is the canonical catalog, lifecycle ledger, provenance index, policy
+references, and processed-event ledger in every profile. S3-compatible storage is
+the evidence plane. Search stores, vector stores, graph stores, caches, and
+ClickHouse are rebuildable projections. Temporal is an optional/adopted workflow
+controller for long-running enterprise ingestion and deletion; it is neither the
+event ledger nor compliance archive.
+
+Do not run two primary event buses or two authoritative search projections without
+a written responsibility boundary, migration plan, and reconciliation tests.
+
+## Identity, authorization, and PostgreSQL containment
+
+The generic OIDC adapter validates discovery/JWKS, algorithm, issuer, audience,
+expiry, not-before, authorized party/client, scopes, and organization claims. Human
+identities are keyed by immutable `issuer + subject`, never email. Browser sessions
+use authorization code with PKCE. SCIM may synchronize users and groups but is not
+the live authorization decision point.
+
+For the XSAMA profile, configure Logto as the OIDC provider and register the
+gateway as an organization-level API resource. Derive organization only from the
+validated token or a server-side mapping. A path organization is a consistency
+assertion that must match the token; headers, prompts, filters, tags, and MCP tool
+arguments never choose a tenant.[43]
+
+Use small action scopes such as `context:search`, `context:read`,
+`context:ingest`, `context:manage_policy`, `context:audit_read`, and
+`context:request_access`; do not define wildcard data-plane scopes. Reference
+organization roles may include `member`, `manager`, `knowledge_admin`, and
+`compliance_reviewer`, with separately bounded service/agent roles. These are
+coarse API ceilings, not resource visibility decisions.
+
+Use one relationship authorization adapter in the first production slice:
+OpenFGA. Model opaque objects such as `organization:<uuid>`, `team:<uuid>`,
+`resource:<uuid>`, and principals. Resources have immutable parent-organization
+relations; child chunks inherit visibility from their resource. Typical relations
+include organization `member`/`manager`/`knowledge_admin`, team `member`, and
+resource `reader`/`restricted_reader`/`can_read`/`can_manage`. Manager status alone
+does not grant restricted access. Cross-organization sharing is an explicit,
+expiring, approved exception.[44]
+
+Use permission-aware discovery when tractable, mandatory tenant/scope predicates
+during candidate search, then an exact batch authorization check before content
+hydration. Never use stale authorization results for revocation-sensitive reads.
+The authorization adapter's consistency contract is `min_latency`,
+`at_least_as_fresh`, or `fully_consistent`. Persist sensitive grants and group
+relations; do not depend on token-lifetime contextual tuples for immediate
+revocation.
+
+OPA is optional for contextual policy that returns disclosure obligations such as
+redaction profile, allowed fields, approval requirement, result limit, purpose,
+classification ceiling, or agent action ceiling. It does not duplicate the
+relationship graph. Cedar may replace OPA for embedded schema-validated policy;
+do not run OpenFGA, OPA, and Cedar as competing sources for the same decision.
+
+Authenticate every agent worker/container as the separate `runtime` identity in
+the delegation model. Add SPIFFE/SPIRE when service count or east-west trust
+boundaries justify short-lived workload certificates; workload identity augments,
+but never replaces, the end-user/agent authorization decision.[53]
+
+PostgreSQL RLS is a tenant-containment backstop, not the per-resource sharing
+authority. Every protected table includes non-null `organization_id`; composite
+foreign keys prevent cross-organization parent references. Runtime roles are
+non-owner and `NOBYPASSRLS`; protected tables use `FORCE ROW LEVEL SECURITY`.
+Set tenant context transaction-locally after token validation so pooled connections
+cannot leak a previous request's tenant.[42]
+
+```sql
+ALTER TABLE context.resource ENABLE ROW LEVEL SECURITY;
+ALTER TABLE context.resource FORCE ROW LEVEL SECURITY;
+REVOKE ALL ON context.resource FROM PUBLIC;
+
+CREATE POLICY resource_org_isolation ON context.resource
+  TO context_gateway
+  USING (
+    organization_id = current_setting('app.organization_id', true)
+  )
+  WITH CHECK (
+    organization_id = current_setting('app.organization_id', true)
+  );
+
+-- At the start of every transaction; the value comes from validated identity.
+SELECT set_config('app.organization_id', $1, true);
+```
+
+## Ingestion, processing, and schema contract
+
+CloudEvents 1.x is the outer envelope. Versioned JSON Schema is the initial
+enforceable payload contract; use Apicurio compatibility/validity rules when
+multiple teams or enterprise profiles need runtime governance. AsyncAPI documents
+channels but does not enforce domain compatibility.
+
+Required envelope/domain fields are:
+
+```text
+event_id, event type/version, source, producer, organization_id,
+context_space_id, resource_id, revision_id, occurred_at, observed_at,
+classification, trust, source authority, schema ID/version,
+correlation/causation IDs, trace context,
+immutable evidence pointer + object version + SHA-256
+```
+
+Never put document bodies, raw PII, credentials, bearer tokens, or secret source
+URLs in event payloads. Use bounded topic/stream families (`context.lifecycle.v1`,
+`context.work.v1`, `context.derived.v1`, `context.audit.v1`, `context.dlq.v1`),
+not one per tenant. Order lifecycle events by `(organization_id, resource_id)`;
+make no global-order promise.
+
+Intake writes source cursor/resource/revision state and an outbox row in one
+PostgreSQL transaction after evidence quarantine and validation. The relay may
+redeliver, so each materializer owns a durable unique
+`(consumer_name, event_id)` receipt or deterministic projection key. External
+effects use stable idempotency keys and recorded outcomes. Reconciliation compares
+desired canonical state to projections and emits auditable repair events.
+
+Schema rules:
+
+- default to backward-transitive compatibility for event values;
+- make additive optional changes only within a version;
+- never reuse a field name/number with a different meaning;
+- use a new event type/version and dual-read/write migration for breaking changes;
+- version parser, OCR, chunk, embedding, redaction, and ACL profiles separately;
+- quarantine unknown or malformed payloads instead of guessing.
+
+Isolated workers execute:
+
+```text
+validate tenant/source/signature/schema
+→ quarantine, ClamAV malware scan, MIME/archive/resource-limit checks
+→ immutable evidence write and hash verification
+→ extract/OCR with quality evidence
+→ classify and create retrieval-safe redaction with Presidio/policy detectors
+→ deterministic structure-aware chunking
+→ embedding/index projection
+→ ACL/provenance/final-state verification
+→ make revision retrievable
+```
+
+Use Docling as the primary rich-document parser and Apache Tika as a broad-format
+fallback behind `ParserProvider`; Unstructured remains a viable profile adapter.
+Pin versions and enforce archive depth, decompressed bytes, file/page count, CPU,
+memory, wall-clock, and no-network limits. Low-confidence extraction stays
+quarantined or enters review.[48][49][62][63][64]
+
+Chunks preserve page, section/title path, source element IDs, character offsets,
+and table/image locators. Keep structured table data plus a readable rendition.
+Index only policy-approved renditions. A new model or chunk policy creates a
+parallel embedding generation and switches only after evaluation/backfill.
+
+Temporal workflows, where enabled, run per revision or bounded job. Activities are
+idempotent and heartbeat while long-running; coordinators use Continue-As-New
+before history limits are approached.[46][47]
+
+## Gateway API, MCP, retrieval, and context packets
+
+REST is canonical. MCP is a thin adapter over the same application service and
+policy path, not a second store. Initial REST operations are constrained business
+operations:
+
+```text
+POST /v1/organizations/{orgId}/context:search
+GET  /v1/organizations/{orgId}/context/resources/{resourceId}
+POST /v1/organizations/{orgId}/context/access-requests
+POST /v1/organizations/{orgId}/context/sources
+GET  /v1/organizations/{orgId}/context/audit
+```
+
+Do not expose arbitrary SQL, caller-defined vector predicates, unrestricted URL
+fetching, raw authorization tuple administration, filesystem access, or a generic
+HTTP proxy. Start MCP read-only with `context.search`, `context.get`,
+`context.brief`, and `context.request_access`. The protected MCP endpoint publishes
+OAuth protected-resource metadata at `/.well-known/oauth-protected-resource`,
+returns a `401` bearer challenge with only the required scopes, validates its own
+resource audience, and never passes client tokens to downstream services. Prefer
+pre-registered enterprise clients; do not enable dynamic client registration by
+default merely to accommodate unknown clients.[26][35]
+
+Every search executes:
+
+```text
+authenticate principal and runtime
+→ resolve organization, delegation, purpose, and consistency requirement
+→ scope/action gate
+→ relationship authorization and contextual disclosure policy
+→ RLS transaction context
+→ mandatory server-generated predicate
+→ lexical/vector candidate retrieval
+→ exact current authorization/state check
+→ hydrate only allowed retrieval-safe content
+→ redaction/output DLP
+→ bounded cited context packet
+→ append-only audit event
+```
+
+Indexes return stable candidate IDs plus minimal partition metadata, not plaintext.
+Never fetch global top-K and filter afterward. Cache keys include organization,
+principal/delegation, authorization revision, policy revision, purpose, and query
+intent; invalidation must meet the measured revocation SLO. Valkey may hold
+non-sensitive or authorization-keyed caches, but it is never canonical and a cache
+hit never bypasses current revocation/state checks.
+
+The context packet includes summary, facts, relevant timeline entries,
+stakeholders, citations (`resource/revision/page/section`), applied redactions,
+policy/authz revision, audit ID, confidence/review state, and agent action
+restrictions. It does not expose denied-resource metadata, raw database rows, or
+opaque vector IDs.
+
+## Evidence, provenance, deletion, and audit
+
+Each revision has a derivative manifest that enumerates raw object versions,
+renders, extracted elements, chunks, embedding generations, summaries, graph facts,
+caches, exports, and search rows. Citation-capable chunks preserve:
+
+```text
+chunk_id, organization_id, context_space_id, resource_id, revision_id,
+source connector + external locator, evidence URI/version/SHA-256,
+observed/source-modified timestamps, extractor/config/artifact hash,
+page/section/element/character locator, redaction policy,
+chunk and embedding profiles, authorization reference,
+event/causation/workflow IDs, lifecycle state
+```
+
+Deletion is a saga:
+
+1. authorize and record scope, requester, policy, legal-hold result, and deadline;
+2. immediately revoke gateway visibility;
+3. enumerate every derivative and copy from the manifest;
+4. remove projections/caches first and prove zero retrievable results;
+5. erase evidence according to retention/legal-hold policy;
+6. emit a signed completion or blocked manifest and reconcile periodically.
+
+Object-store versioning, legal holds, and WORM retention mean a missing current key
+does not prove physical erasure. Treat retention and erasure as explicit legal
+policies; use per-tenant envelope-key destruction where appropriate and verified.
+Projection deletion lag never delays access revocation.[38][50][51]
+
+Audit events include request/trace/organization IDs; subject, actor, owner,
+runtime, OAuth/MCP client, and delegation grant; action/scopes; opaque resource
+counts/IDs; authorization model/revision/consistency and result; policy decision
+and redaction profile; token fingerprint/JTI hash; latency/error/output size; and
+deletion or administrative outcome. Do not log raw queries, prompts, outputs,
+tokens, source content, or secret-bearing tool arguments by default. Mask OPA and
+telemetry exports before enabling them.[45][52]
+
+## Specialist component adjudication
+
+| Component | Authoritative disposition |
+|---|---|
+| PostgreSQL + pgvector | Canonical foundation and starter retrieval; RLS tenant backstop |
+| OpenSearch | Reference enterprise hybrid retrieval projection |
+| Qdrant | Optional vector-specialist projection after measurement; never direct or authoritative. Self-hosted instances require explicit TLS/API-key/network hardening.[68] |
+| Weaviate | Alternative if native tenant shards/RBAC justify operating another vector platform.[61] |
+| ClickHouse | Audit/timeline analytics and optional measured retrieval experiment; never truth |
+| Haystack | Preferred controlled retrieval/pipeline library, not a shared data plane |
+| LlamaIndex | Alternative connector/ingestion library behind the same contracts |
+| Graphiti | Optional derived temporal graph for bounded domains; not ACL or truth; its MCP integration is not a production security boundary |
+| Zep Cloud | Excluded from local-data deployments; its managed governance features do not transfer to self-managed Graphiti.[70] |
+| Mem0 | Optional isolated user/agent preference memory; not shared organizational knowledge |
+| Letta | Isolated stateful-agent runtime only; controller authorization and tenant isolation remain mandatory |
+| R2R | Proof-of-concept only until repository maintenance and exact collection/access enforcement are revalidated |
+| Dify | Optional consumer/UI through gateway; verify multi-tenant license and propagate end-user identity rather than trusting a static external-knowledge key.[58][69] |
+| OpenMetadata/DataHub | Governance catalog projections/integrations, not runtime context authority |
+| Airbyte/NiFi/Redpanda Connect | Optional edge connectors, never the canonical/policy layer |
+
+Haystack/LlamaIndex, Graphiti, Mem0, Letta, R2R, and Dify must not become shortcuts
+around the gateway, canonical records, delegation model, or authorization checks.
+[54][55][56][57][58][59][60]
+
+## Operational non-negotiables
+
+1. Broker producer idempotency or transactions do not provide end-to-end exactly
+   once across PostgreSQL, S3, parsers/models, indexes, and external APIs.
+2. Enterprise Debezium deployments budget and alert on PostgreSQL replication-slot
+   WAL retention; an outage can exhaust disk, while an aggressive retention cap can
+   invalidate the slot and force resnapshot.[66]
+3. Do not clean outbox rows based only on an application publish acknowledgement.
+   Retain them through a durable CDC high-water mark and reconciliation window.
+4. Kafka-compacted current-state topics never replace non-compacted lifecycle and
+   audit history.
+5. Broker/schema migrations require dual read/write, backfill, compatibility tests,
+   and a deprecation window; registry acceptance alone cannot preserve semantics.
+6. S3 versioning, delete markers, WORM, and legal holds distinguish “not visible”
+   from “physically erased.”
+7. Search filters and cache partitioning must prevent tenant, score, count,
+   pagination, citation, and answer-cache side channels.
+8. ACL changes synchronously affect gateway decisions; asynchronous index updates
+   cannot be the revocation authority.
+9. Projection mutation/delete lag never delays gateway denial.
+10. Hostile documents require malware scanning, parser sandboxing, archive/PDF
+    expansion limits, no macros, no network, and reproducible pinned dependencies.
+11. Empty extraction, OCR noise, stripped tables, duplicate connector pages, stale
+    cursors, and clock skew are observable quality states, not silently indexed data.
+12. Re-embedding/profile changes need capacity plans, parallel generations, canary
+    evaluation, rollback, and provenance-aware retirement of old indexes.
+13. Long Temporal workflows heartbeat and Continue-As-New; workflow history is not
+    a permanent compliance ledger.
+14. Telemetry is a disclosure surface: scrub prompts, outputs, PII, credentials,
+    baggage, and plugin fields before export.
+15. Restore drills recover PostgreSQL, evidence mappings/object versions, event
+    history, schema contracts, authorization models/tuples, policies, and secrets as
+    one measured RPO/RTO scenario; replay tombstones before serving restored data.
+16. Redpanda is a profile alternative only after accepting its source-available BSL
+    terms and validating Kafka/Debezium/backup compatibility.[65]
+
+Use OpenTelemetry and the existing Langfuse installation for redacted operational
+and retrieval evaluation metadata once its OIDC integration is healthy. Content
+capture remains opt-in. Maintain versioned retrieval, authorization, prompt-
+injection, deletion, and consent/suppression fixtures; marketing policy must observe
+consent changes before any send.[52][67]
+
+## Delivery sequence
+
+1. Version the canonical record/event schemas, REST/OpenAPI, AsyncAPI, taxonomy,
+   authorization fixtures, and deletion state machine.
+2. Build synthetic employee, manager, customer, agent, restricted-note, revocation,
+   and tombstone fixtures.
+3. Implement the gateway with generic OIDC, OpenFGA, PostgreSQL/RLS, evidence
+   storage, structured audit, and no agent bypass.
+4. Complete one source end-to-end (Chatwoot for XSAMA), including quarantine,
+   parser isolation, outbox, replay, retrieval, citation, and deletion.
+5. Prove cross-tenant denial, delegation narrowing, revocation consistency,
+   replay determinism, prompt-injection containment, and restore safety.
+6. Enable read-only REST retrieval, then the thin remote MCP adapter.
+7. Add write/send actions only behind explicit scopes, budgets, and approval.
+8. Add Kafka/OpenSearch/Qdrant/Temporal/graph or catalog components only when
+   measured scale, replay, workflow, or query requirements justify the profile.
+
 ## Sources
 
 [1] https://csrc.nist.gov/pubs/sp/800/207/final
@@ -613,3 +1033,33 @@ Do not ingest production-wide organizational history or enable autonomous agent 
 [38] https://csrc.nist.gov/pubs/sp/800/88/r2/final
 [39] https://opentelemetry.io/docs/security/handling-sensitive-data
 [40] https://kafka.apache.org/documentation
+[41] https://docs.opensearch.org/latest/vector-search/ai-search/hybrid-search/index/
+[42] https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+[43] https://docs.logto.io/authorization/validate-access-tokens
+[44] https://openfga.dev/docs/interacting/relationship-queries
+[45] https://www.openpolicyagent.org/docs/management-decision-logs
+[46] https://docs.temporal.io/activity-definition
+[47] https://docs.temporal.io/workflow-execution/limits
+[48] https://tika.apache.org
+[49] https://docs.unstructured.io/open-source/core-functionality/chunking
+[50] https://docs.min.io/aistor/administration/object-locking-and-immutability
+[51] https://clickhouse.com/docs/concepts/features/operations/delete/overview
+[52] https://opentelemetry.io/docs/security/handling-sensitive-data
+[53] https://spiffe.io/docs/latest/spire-about/use-cases
+[54] https://docs.haystack.deepset.ai/docs/document-store
+[55] https://docs.llamaindex.ai/en/stable/module_guides/loading/ingestion_pipeline
+[56] https://docs.mem0.ai/open-source/features/rest-api
+[57] https://docs.letta.com/platform/app-server/integration-patterns
+[58] https://github.com/langgenius/dify/blob/main/LICENSE
+[59] https://github.com/getzep/graphiti
+[60] https://github.com/SciPhi-AI/R2R
+[61] https://docs.weaviate.io/weaviate/manage-collections/multi-tenancy
+[62] https://docling-project.github.io/docling/
+[63] https://docs.clamav.net
+[64] https://github.com/microsoft/presidio
+[65] https://docs.redpanda.com/streaming/current/get-started/licensing/overview
+[66] https://www.postgresql.org/docs/current/logicaldecoding-explanation.html
+[67] https://langfuse.com/docs/observability/get-started
+[68] https://qdrant.tech/documentation/security/
+[69] https://docs.dify.ai/en/cloud/use-dify/knowledge/external-knowledge-api
+[70] https://help.getzep.com/zep-vs-graphiti
