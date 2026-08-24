@@ -11,6 +11,7 @@ import (
 
 	"github.com/xsama/context-fabric/internal/audit"
 	"github.com/xsama/context-fabric/internal/deletion"
+	"github.com/xsama/context-fabric/internal/observability"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/policy"
 	"github.com/xsama/context-fabric/internal/ports"
@@ -59,6 +60,7 @@ type Request struct {
 
 // Search runs the full governed retrieval pipeline and returns a ContextPacket.
 func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket, error) {
+	observability.Inc(observability.SearchRequests)
 	if req.Action == "" {
 		req.Action = "context.search"
 	}
@@ -178,6 +180,7 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 	if err != nil {
 		return ports.ContextPacket{}, err
 	}
+	observability.Inc(observability.AuthzBatchChecks)
 
 	allowedHits := make([]ports.SearchHit, 0, len(candidates))
 	authzRev := ""
@@ -387,6 +390,7 @@ func hashQuery(q string) string {
 
 // Graph expands a seed resource into the caller's visible knowledge subgraph (ADR 0013).
 func (p *Pipeline) Graph(ctx context.Context, req Request) (ports.ContextPacket, error) {
+	observability.Inc(observability.GraphRequests)
 	if req.Action == "" {
 		req.Action = "context.graph"
 	}
@@ -584,6 +588,7 @@ func (p *Pipeline) batchAllow(ctx context.Context, principal ports.Principal, re
 	if err != nil {
 		return nil, "", err
 	}
+	observability.Inc(observability.AuthzBatchChecks)
 	authzRev := ""
 	for i, id := range ids {
 		if i < len(decisions) && decisions[i].Allowed {

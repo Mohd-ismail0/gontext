@@ -16,8 +16,9 @@ info:
     arbitrary SQL, caller-defined vector predicates, raw authorization tuple
     administration, unrestricted URL fetching, filesystem access, or a generic HTTP proxy.
 
-    MCP tools `context.search`, `context.get`, `context.brief`, and
+    MCP tools `context.search`, `context.get`, `context.brief`, `context.graph`, and
     `context.request_access` map 1:1 onto the same ApplicationService operations.
+    Retrieval is sparse/graph-first (ADR 0015); dense fusion is gated.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
@@ -196,10 +197,13 @@ paths:
     post:
       tags: [Retrieval]
       operationId: searchContext
-      summary: Policy-first hybrid search
+      summary: Policy-first ranked lexical search
       description: |
-        OAuth scope ceiling `context:search`. Tags/filters only AND-narrow;
-        they never grant access. Returns a cited ContextPacket.
+        OAuth scope ceiling `context:search`. Candidates come from an org-scoped
+        sparse/FTS projection (IDs, titles, labels, short summaries). Tags/filters
+        only AND-narrow; they never grant access. AuthZ BatchCheck runs before
+        hydration. Dense/hybrid fusion is out of v1 until measured (ADR 0015).
+        Returns a cited ContextPacket.
       parameters:
         - $ref: "#/components/parameters/OrgId"
       requestBody:
@@ -1564,8 +1568,9 @@ components:
         depth:
           type: integer
           minimum: 0
-          maximum: 8
-          default: 2
+          maximum: 4
+          default: 1
+          description: BFS hop budget. Server hard-caps at 4 (ADR 0015).
         max_nodes:
           type: integer
           minimum: 1
@@ -1580,7 +1585,9 @@ components:
           $ref: "#/components/schemas/ConsistencyMode"
         cursor:
           type: string
-          description: Resume cursor from a prior truncated graph response.
+          description: |
+            Truncation signal companion only in v1. Resume pagination is not
+            guaranteed; clients should re-query with adjusted depth/max_nodes.
 
     ContextPacket:
       type: object
@@ -1647,7 +1654,9 @@ components:
           description: True when node/edge budgets or traversal caps were hit.
         next_cursor:
           type: string
-          description: Opaque resume token when truncated is true.
+          description: |
+            Opaque truncation signal when truncated is true. Resume pagination is
+            not guaranteed in v1 (ADR 0015); re-query with adjusted caps.
         responded_at:
           type: string
           format: date-time

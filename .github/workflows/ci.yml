@@ -25,5 +25,16 @@ jobs:
           go build -o bin/cf ./cmd/cf
       - name: Validate OpenAPI contract
         run: test -s contracts/openapi/openapi.yaml
+      - name: Validate OpenFGA model JSON
+        run: |
+          test -s contracts/openfga/model.json
+          python3 -c "import json; m=json.load(open('contracts/openfga/model.json')); assert m.get('schema_version'); assert m.get('type_definitions')"
+      - name: Validate JSON Schema contracts
+        run: |
+          test -s contracts/jsonschema/context-packet.json
+          test -s contracts/jsonschema/export-manifest.json
+          test -s contracts/jsonschema/event-envelope.json
+      - name: Compile retrieval eval scorer
+        run: go build -o bin/retrieval-score ./eval/retrieval
       - name: Docker build
         run: docker build -t context-fabric:ci .

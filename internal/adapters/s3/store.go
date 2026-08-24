@@ -1,4 +1,3 @@
-// Package s3store implements EvidenceStore against S3-compatible APIs (MinIO path-style).
 package s3store
 
 import (
@@ -8,6 +7,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/xsama/context-fabric/internal/ports"
 )
 
+const defaultMaxBytes int64 = 64 << 20 // 64 MiB
+
 // Config configures the S3 evidence adapter.
 type Config struct {
 	Endpoint        string
@@ -27,13 +30,17 @@ type Config struct {
 	SecretAccessKey string
 	PathStyle       bool
 	Bucket          string
+	// MaxBytes caps Put body size (default 64<<20 / EVIDENCE_MAX_BYTES).
+	// Oversized uploads are rejected with a validation error before PutObject.
+	MaxBytes int64
 }
 
 // Store is an S3-compatible EvidenceStore.
 type Store struct {
-	client *s3.Client
-	bucket string
+	client  *s3.Client
+	bucket  string
 	presign *s3.PresignClient
+	maxBytes int64
 }
 
 // New creates an EvidenceStore. Use path-style for MinIO.
@@ -46,6 +53,10 @@ func New(cfg Config) (*Store, error) {
 	}
 	if cfg.Bucket == "" {
 		cfg.Bucket = "context-quarantine"
+	}
+	maxBytes := cfg.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = MaxBytesFromEnv()
 	}
 	resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, _ ...any) (aws.Endpoint, error) {
 		return aws.Endpoint{
@@ -62,18 +73,43 @@ func New(cfg Config) (*Store, error) {
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.UsePathStyle = cfg.PathStyle
 	})
-	return &Store{client: client, bucket: cfg.Bucket, presign: s3.NewPresignClient(client)}, nil
+	return &Store{client: client, bucket: cfg.Bucket, presign: s3.NewPresignClient(client), maxBytes: maxBytes}, nil
+}
+
+// MaxBytesFromEnv reads EVIDENCE_MAX_BYTES (default 64 MiB).
+func MaxBytesFromEnv() int64 {
+	raw := strings.TrimSpace(os.Getenv("EVIDENCE_MAX_BYTES"))
+	if raw == "" {
+		return defaultMaxBytes
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return defaultMaxBytes
+	}
+	return n
 }
 
 var _ ports.EvidenceStore = (*Store)(nil)
 
 func (s *Store) Put(ctx context.Context, key string, body io.Reader, contentType string, meta map[string]string) (ports.EvidenceObject, error) {
-	data, err := io.ReadAll(body)
+	max := s.maxBytes
+	if max <= 0 {
+		max = defaultMaxBytes
+	}
+	// Read at most max+1 bytes so we can detect overflow without loading unbounded input.
+	limited := io.LimitReader(body, max+1)
+	hasher := sha256.New()
+	var buf bytes.Buffer
+	n, err := io.Copy(&buf, io.TeeReader(limited, hasher))
 	if err != nil {
 		return ports.EvidenceObject{}, err
 	}
-	sum := sha256.Sum256(data)
-	hash := "sha256:" + hex.EncodeToString(sum[:])
+	if n > max {
+		return ports.EvidenceObject{}, platform.ErrValidation(
+			fmt.Sprintf("evidence object exceeds max size of %d bytes", max),
+		)
+	}
+	hash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	md := map[string]string{}
 	for k, v := range meta {
 		md[k] = v
@@ -82,7 +118,7 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, contentType
 	out, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(key),
-		Body:        bytes.NewReader(data),
+		Body:        bytes.NewReader(buf.Bytes()),
 		ContentType: aws.String(contentType),
 		Metadata:    md,
 	})
@@ -95,7 +131,7 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, contentType
 	}
 	return ports.EvidenceObject{
 		Key: key, VersionID: ver, ContentHash: hash,
-		Size: int64(len(data)), ContentType: contentType, Metadata: md,
+		Size: n, ContentType: contentType, Metadata: md,
 	}, nil
 }
 

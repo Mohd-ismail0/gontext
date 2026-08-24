@@ -31,6 +31,9 @@ type OIDCConfig struct {
 	ClaimEmail   string
 	ClaimGroups  string
 	ClaimOrg     string
+	// ClaimScopes is the primary OAuth scope claim (default "scope").
+	// If empty, Authenticate also tries "scp" (Azure AD style).
+	ClaimScopes  string
 	HTTPClient   *http.Client
 	CacheTTL     time.Duration
 }
@@ -60,6 +63,9 @@ func NewOIDC(cfg OIDCConfig) *OIDCProvider {
 	}
 	if cfg.ClaimOrg == "" {
 		cfg.ClaimOrg = "org_id"
+	}
+	if cfg.ClaimScopes == "" {
+		cfg.ClaimScopes = "scope"
 	}
 	if cfg.CacheTTL == 0 {
 		cfg.CacheTTL = 10 * time.Minute
@@ -130,7 +136,67 @@ func (p *OIDCProvider) Authenticate(ctx context.Context, credentials ports.Crede
 		Email:   email,
 		Groups:  groups,
 		Roles:   claimStringSlice(claims, "roles"),
+		Scopes:  claimScopes(claims, p.cfg.ClaimScopes),
 	}, nil
+}
+
+// claimScopes extracts OAuth scopes from scope (space-delimited string) or scp (array/string).
+func claimScopes(claims map[string]any, primary string) []string {
+	if primary == "" {
+		primary = "scope"
+	}
+	if scopes := normalizeScopes(claims[primary]); len(scopes) > 0 {
+		return scopes
+	}
+	if primary != "scp" {
+		if scopes := normalizeScopes(claims["scp"]); len(scopes) > 0 {
+			return scopes
+		}
+	}
+	return nil
+}
+
+func normalizeScopes(v any) []string {
+	if v == nil {
+		return nil
+	}
+	switch t := v.(type) {
+	case string:
+		return uniqueNonEmpty(strings.Fields(t))
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, x := range t {
+			if s, ok := x.(string); ok {
+				out = append(out, strings.Fields(s)...)
+			}
+		}
+		return uniqueNonEmpty(out)
+	case []string:
+		out := make([]string, 0, len(t))
+		for _, s := range t {
+			out = append(out, strings.Fields(s)...)
+		}
+		return uniqueNonEmpty(out)
+	default:
+		return nil
+	}
+}
+
+func uniqueNonEmpty(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
 
 func (p *OIDCProvider) keyFor(kid, alg string) (any, error) {

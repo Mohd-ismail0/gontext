@@ -1,0 +1,301 @@
+{
+  "schema_version": "1.1",
+  "type_definitions": [
+    {
+      "type": "user"
+    },
+    {
+      "type": "agent"
+    },
+    {
+      "type": "service"
+    },
+    {
+      "type": "organization",
+      "relations": {
+        "member": {
+          "this": {}
+        },
+        "manager": {
+          "this": {}
+        },
+        "knowledge_admin": {
+          "this": {}
+        },
+        "compliance_reviewer": {
+          "this": {}
+        }
+      },
+      "metadata": {
+        "relations": {
+          "member": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "agent" },
+              { "type": "service" }
+            ]
+          },
+          "manager": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          },
+          "knowledge_admin": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          },
+          "compliance_reviewer": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "team",
+      "relations": {
+        "organization": {
+          "this": {}
+        },
+        "member": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "member" }
+                }
+              }
+            ]
+          }
+        },
+        "manager": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "manager" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "organization": {
+            "directly_related_user_types": [
+              { "type": "organization" }
+            ]
+          },
+          "member": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "agent" },
+              { "type": "service" }
+            ]
+          },
+          "manager": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "brand",
+      "relations": {
+        "organization": {
+          "this": {}
+        },
+        "member": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "member" }
+                }
+              }
+            ]
+          }
+        },
+        "manager": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "manager" }
+                }
+              }
+            ]
+          }
+        },
+        "knowledge_admin": {
+          "union": {
+            "child": [
+              { "this": {} },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "knowledge_admin" }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "organization": {
+            "directly_related_user_types": [
+              { "type": "organization" }
+            ]
+          },
+          "member": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "agent" },
+              { "type": "service" }
+            ]
+          },
+          "manager": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          },
+          "knowledge_admin": {
+            "directly_related_user_types": [
+              { "type": "user" }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "resource",
+      "relations": {
+        "organization": {
+          "this": {}
+        },
+        "brand": {
+          "this": {}
+        },
+        "parent": {
+          "this": {}
+        },
+        "owner": {
+          "this": {}
+        },
+        "assignee": {
+          "this": {}
+        },
+        "reader": {
+          "this": {}
+        },
+        "restricted_reader": {
+          "this": {}
+        },
+        "can_manage": {
+          "union": {
+            "child": [
+              { "computedUserset": { "relation": "owner" } },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "manager" }
+                }
+              },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "organization" },
+                  "computedUserset": { "relation": "knowledge_admin" }
+                }
+              },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "parent" },
+                  "computedUserset": { "relation": "can_manage" }
+                }
+              }
+            ]
+          }
+        },
+        "can_read": {
+          "union": {
+            "child": [
+              { "computedUserset": { "relation": "reader" } },
+              { "computedUserset": { "relation": "restricted_reader" } },
+              { "computedUserset": { "relation": "owner" } },
+              { "computedUserset": { "relation": "assignee" } },
+              {
+                "tupleToUserset": {
+                  "tupleset": { "relation": "parent" },
+                  "computedUserset": { "relation": "can_read" }
+                }
+              },
+              { "computedUserset": { "relation": "can_manage" } }
+            ]
+          }
+        }
+      },
+      "metadata": {
+        "relations": {
+          "organization": {
+            "directly_related_user_types": [
+              { "type": "organization" }
+            ]
+          },
+          "brand": {
+            "directly_related_user_types": [
+              { "type": "brand" }
+            ]
+          },
+          "parent": {
+            "directly_related_user_types": [
+              { "type": "resource" }
+            ]
+          },
+          "owner": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "team" }
+            ]
+          },
+          "assignee": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "agent" },
+              { "type": "team", "relation": "member" }
+            ]
+          },
+          "reader": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "agent" },
+              { "type": "service" },
+              { "type": "team", "relation": "member" },
+              { "type": "organization", "relation": "member" }
+            ]
+          },
+          "restricted_reader": {
+            "directly_related_user_types": [
+              { "type": "user" },
+              { "type": "agent" },
+              { "type": "service" }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

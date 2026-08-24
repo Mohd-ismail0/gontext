@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xsama/context-fabric/internal/observability"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -31,6 +32,15 @@ const (
 type FeedStore interface {
 	ListChanges(ctx context.Context, orgID, cursor string, limit int) ([]ports.ChangeEvent, string, error)
 	AppendChange(ctx context.Context, ev ports.ChangeEvent) error
+}
+
+// Durability optionally persists webhook subscriptions and deliveries.
+type Durability interface {
+	SaveSubscription(ctx context.Context, sub Subscription) error
+	ListSubscriptions(ctx context.Context, orgID string) ([]Subscription, error)
+	GetSubscription(ctx context.Context, orgID, subscriptionID string) (Subscription, error)
+	SaveDelivery(ctx context.Context, d DeliveryAttempt) error
+	ListDeliveries(ctx context.Context, orgID, subscriptionID string, limit int) ([]DeliveryAttempt, error)
 }
 
 // Subscription is a webhook registration.
@@ -77,24 +87,24 @@ type PublicEvent struct {
 // Service owns cursor listing, signing, delivery attempts, and replay.
 type Service struct {
 	Feed         FeedStore
+	Durable      Durability // optional Postgres-backed webhook state
 	mu           sync.RWMutex
 	subs         map[string]map[string]Subscription // org -> id -> sub
 	deliv        map[string][]DeliveryAttempt       // org -> attempts
 	secret       []byte
+	RequireSecret bool // when true, empty constructor secret is rejected at runtime
 	MaxAttempts  int // dead-letter after this many failed pushes (default 8)
 	Now          func() time.Time
 }
 
 // New creates a change-feed service. webhookSecret signs delivery bodies.
+// Pass nil/empty only for demo; production must set WEBHOOK_SIGNING_SECRET.
 func New(feed FeedStore, webhookSecret []byte) *Service {
-	if len(webhookSecret) == 0 {
-		webhookSecret = []byte("context-fabric-webhook")
-	}
 	return &Service{
 		Feed:        feed,
 		subs:        make(map[string]map[string]Subscription),
 		deliv:       make(map[string][]DeliveryAttempt),
-		secret:      webhookSecret,
+		secret:      append([]byte(nil), webhookSecret...),
 		MaxAttempts: 8,
 	}
 }
@@ -142,20 +152,28 @@ func (s *Service) UpsertWebhook(orgID string, targetURL string, events []string,
 	if orgID == "" || targetURL == "" {
 		return Subscription{}, platform.ErrValidation("org and target_url required")
 	}
+	if secret == "" {
+		if len(s.secret) == 0 {
+			return Subscription{}, platform.ErrValidation("webhook signing secret required (set WEBHOOK_SIGNING_SECRET or per-subscription secret)")
+		}
+		secret = hex.EncodeToString(s.secret)
+	}
+	id := platform.NewEventID()
+	sub := Subscription{
+		ID: id, OrgID: orgID, TargetURL: targetURL, Events: events,
+		Secret: secret, Enabled: true, CreatedAt: s.now(),
+	}
+	if s.Durable != nil {
+		if err := s.Durable.SaveSubscription(context.Background(), sub); err != nil {
+			return Subscription{}, err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	m := s.subs[orgID]
 	if m == nil {
 		m = make(map[string]Subscription)
 		s.subs[orgID] = m
-	}
-	id := platform.NewEventID()
-	if secret == "" {
-		secret = hex.EncodeToString(s.secret)
-	}
-	sub := Subscription{
-		ID: id, OrgID: orgID, TargetURL: targetURL, Events: events,
-		Secret: secret, Enabled: true, CreatedAt: s.now(),
 	}
 	m[id] = sub
 	pub := sub
@@ -165,6 +183,17 @@ func (s *Service) UpsertWebhook(orgID string, targetURL string, events []string,
 
 // ListWebhooks returns public subscriptions for an org.
 func (s *Service) ListWebhooks(orgID string) []Subscription {
+	if s.Durable != nil {
+		if items, err := s.Durable.ListSubscriptions(context.Background(), orgID); err == nil && len(items) > 0 {
+			out := make([]Subscription, 0, len(items))
+			for _, sub := range items {
+				pub := sub
+				pub.Secret = ""
+				out = append(out, pub)
+			}
+			return out
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]Subscription, 0, len(s.subs[orgID]))
@@ -178,6 +207,12 @@ func (s *Service) ListWebhooks(orgID string) []Subscription {
 
 // GetWebhook returns a public subscription view.
 func (s *Service) GetWebhook(orgID, subscriptionID string) (Subscription, error) {
+	if s.Durable != nil {
+		if sub, err := s.Durable.GetSubscription(context.Background(), orgID, subscriptionID); err == nil {
+			sub.Secret = ""
+			return sub, nil
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	sub, ok := s.subs[orgID][subscriptionID]
@@ -201,6 +236,7 @@ func (s *Service) SignHMAC(secret string, body []byte) string {
 
 // RecordDelivery stores a delivery attempt.
 func (s *Service) RecordDelivery(orgID, subscriptionID, eventID string, attempt, statusCode int, success bool, errMsg string, payload []byte) DeliveryAttempt {
+	observability.Inc(observability.WebhookDeliveries)
 	sum := sha256.Sum256(payload)
 	status := StatusPending
 	if success {
@@ -231,6 +267,9 @@ func (s *Service) RecordDelivery(orgID, subscriptionID, eventID string, attempt,
 			next := s.now().Add(backoff)
 			d.NextAttempt = &next
 		}
+	}
+	if s.Durable != nil {
+		_ = s.Durable.SaveDelivery(context.Background(), d)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -277,14 +316,27 @@ func (s *Service) ListDLQ(orgID string, limit int) []DeliveryAttempt {
 
 // EnqueueAndAttempt records a push attempt for an event (used by conformance / ops).
 func (s *Service) EnqueueAndAttempt(ctx context.Context, subscriptionID string, ev ports.ChangeEvent) error {
-	s.mu.RLock()
-	sub, ok := s.subs[ev.OrgID][subscriptionID]
-	s.mu.RUnlock()
-	if !ok {
-		return platform.ErrNotFound("webhook subscription not found")
+	sub, err := s.lookupSubscription(ctx, ev.OrgID, subscriptionID)
+	if err != nil {
+		return err
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	return s.pushOne(ctx, client, 2*time.Second, sub, ev)
+}
+
+func (s *Service) lookupSubscription(ctx context.Context, orgID, subscriptionID string) (Subscription, error) {
+	if s.Durable != nil {
+		if sub, err := s.Durable.GetSubscription(ctx, orgID, subscriptionID); err == nil {
+			return sub, nil
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sub, ok := s.subs[orgID][subscriptionID]
+	if !ok {
+		return Subscription{}, platform.ErrNotFound("webhook subscription not found")
+	}
+	return sub, nil
 }
 
 func minInt(a, b int) int {
@@ -296,6 +348,11 @@ func minInt(a, b int) int {
 
 // ListDeliveries returns delivery attempts for a subscription.
 func (s *Service) ListDeliveries(orgID, subscriptionID string, limit int) []DeliveryAttempt {
+	if s.Durable != nil {
+		if items, err := s.Durable.ListDeliveries(context.Background(), orgID, subscriptionID, limit); err == nil && len(items) > 0 {
+			return items
+		}
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit <= 0 {
@@ -313,11 +370,9 @@ func (s *Service) ListDeliveries(orgID, subscriptionID string, limit int) []Deli
 
 // Replay rebuilds a signed public payload for an event and records a new attempt.
 func (s *Service) Replay(ctx context.Context, orgID, subscriptionID, eventID string) (map[string]any, error) {
-	s.mu.RLock()
-	sub, ok := s.subs[orgID][subscriptionID]
-	s.mu.RUnlock()
-	if !ok {
-		return nil, platform.ErrNotFound("webhook subscription not found")
+	sub, err := s.lookupSubscription(ctx, orgID, subscriptionID)
+	if err != nil {
+		return nil, err
 	}
 	items, _, err := s.Feed.ListChanges(ctx, orgID, "", 10_000)
 	if err != nil {
@@ -349,11 +404,9 @@ func (s *Service) Replay(ctx context.Context, orgID, subscriptionID, eventID str
 
 // DeliverSigned builds a signed metadata-only webhook body for an event (no HTTP call in unit tests).
 func (s *Service) DeliverSigned(orgID, subscriptionID string, ev ports.ChangeEvent) (body []byte, signature string, delivery DeliveryAttempt, err error) {
-	s.mu.RLock()
-	sub, ok := s.subs[orgID][subscriptionID]
-	s.mu.RUnlock()
-	if !ok {
-		return nil, "", DeliveryAttempt{}, platform.ErrNotFound("webhook subscription not found")
+	sub, err := s.lookupSubscription(context.Background(), orgID, subscriptionID)
+	if err != nil {
+		return nil, "", DeliveryAttempt{}, err
 	}
 	pub := ToPublic(ev)
 	body, err = json.Marshal(pub)
@@ -392,14 +445,7 @@ func (s *Service) DeliverPending(ctx context.Context, client *http.Client, timeo
 		if delivered >= limit {
 			break
 		}
-		s.mu.RLock()
-		subs := make([]Subscription, 0, len(s.subs[orgID]))
-		for _, sub := range s.subs[orgID] {
-			if sub.Enabled {
-				subs = append(subs, sub)
-			}
-		}
-		s.mu.RUnlock()
+		subs := s.enabledSubs(ctx, orgID)
 		if len(subs) == 0 || s.Feed == nil {
 			continue
 		}
@@ -434,11 +480,9 @@ func (s *Service) DeliverPending(ctx context.Context, client *http.Client, timeo
 
 // DeliverTestPing sends a synthetic ping event to a subscription URL.
 func (s *Service) DeliverTestPing(ctx context.Context, client *http.Client, timeout time.Duration, orgID, subscriptionID string) (DeliveryAttempt, error) {
-	s.mu.RLock()
-	sub, ok := s.subs[orgID][subscriptionID]
-	s.mu.RUnlock()
-	if !ok {
-		return DeliveryAttempt{}, platform.ErrNotFound("webhook subscription not found")
+	sub, err := s.lookupSubscription(ctx, orgID, subscriptionID)
+	if err != nil {
+		return DeliveryAttempt{}, err
 	}
 	ev := ports.ChangeEvent{
 		EventID: platform.NewEventID(), OrgID: orgID, ResourceID: "ping",
@@ -450,7 +494,7 @@ func (s *Service) DeliverTestPing(ctx context.Context, client *http.Client, time
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	err := s.pushOne(ctx, client, timeout, sub, ev)
+	err = s.pushOne(ctx, client, timeout, sub, ev)
 	attempts := s.ListDeliveries(orgID, subscriptionID, 1)
 	if len(attempts) == 0 {
 		return DeliveryAttempt{}, err
@@ -618,6 +662,29 @@ func HasContentFields(v map[string]any) bool {
 		}
 	}
 	return false
+}
+
+func (s *Service) enabledSubs(ctx context.Context, orgID string) []Subscription {
+	if s.Durable != nil {
+		if items, err := s.Durable.ListSubscriptions(ctx, orgID); err == nil && len(items) > 0 {
+			out := make([]Subscription, 0, len(items))
+			for _, sub := range items {
+				if sub.Enabled {
+					out = append(out, sub)
+				}
+			}
+			return out
+		}
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]Subscription, 0, len(s.subs[orgID]))
+	for _, sub := range s.subs[orgID] {
+		if sub.Enabled {
+			out = append(out, sub)
+		}
+	}
+	return out
 }
 
 func (s *Service) now() time.Time {

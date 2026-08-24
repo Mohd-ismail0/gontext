@@ -99,17 +99,18 @@ Helm chart: [`deploy/helm/context-fabric/`](deploy/helm/context-fabric/).
 
 ## Architecture pointers
 
-- ADRs: [`docs/adr/`](docs/adr/) — especially [0001 one-image roles](docs/adr/0001-one-image-role-topology.md), [0002 profiles](docs/adr/0002-deployment-profiles.md), [0003 bundled vs external](docs/adr/0003-bundled-vs-external-infra.md), [0012 v1 boundaries](docs/adr/0012-v1-boundaries.md), [0013 knowledge-graph-first](docs/adr/0013-knowledge-graph-first.md)
+- ADRs: [`docs/adr/`](docs/adr/) — especially [0001 one-image roles](docs/adr/0001-one-image-role-topology.md), [0002 profiles](docs/adr/0002-deployment-profiles.md), [0003 bundled vs external](docs/adr/0003-bundled-vs-external-infra.md), [0012 v1 boundaries](docs/adr/0012-v1-boundaries.md), [0013 knowledge-graph-first](docs/adr/0013-knowledge-graph-first.md), [0015 sparse-first MCP](docs/adr/0015-sparse-first-retrieval-and-portable-mcp.md)
+- Contracts: [`contracts/openapi/openapi.yaml`](contracts/openapi/openapi.yaml), [`contracts/jsonschema/context-packet.json`](contracts/jsonschema/context-packet.json), [`contracts/conformance/suite.yaml`](contracts/conformance/suite.yaml)
 - Threat model: [`docs/threat-model/`](docs/threat-model/)
 - Design reference: [`context-fabric-stress-test.md`](context-fabric-stress-test.md)
 
 ## V1 boundaries
 
-**In v1:** employees/service principals/delegated agents; generic CloudEvents intake + MappingSpec; Chatwoot text connector + synthetic conformance connector; REST + read-only MCP (`search`, `get`, `brief`, `graph`, `request_access`); context as a ReBAC-gated knowledge graph (ADR 0013); cursor feed + signed webhooks (metadata only); org export/import; OpenFGA + Go `PolicyProvider`; PostgreSQL/RLS + pgvector, S3 evidence, NATS JetStream; Compose / Coolify / Helm from one image; `cf` CLI.
+**In v1:** employees/service principals/delegated agents; generic CloudEvents intake + MappingSpec; Chatwoot text connector + synthetic conformance connector; REST + read-only MCP (`search`, `get`, `brief`, `graph`, `request_access`); context as a ReBAC-gated knowledge graph (ADR 0013); sparse/FTS-first ranked search with adaptive graph hops (ADR 0015); cursor feed + signed webhooks (metadata only); org export/import; OpenFGA + Go `PolicyProvider`; PostgreSQL/RLS (+ optional pgvector behind a dense-retrieval gate), S3 evidence, NATS JetStream; Compose / Coolify / Helm from one image; `cf` CLI; optional non-authoritative harness skill packs.
 
-**Out of v1:** customer-facing REST/MCP auth; agent write/send; attachment parsing beyond quarantine; third-party plugins; public NATS streams; OPA/Cedar/SpiceDB/Kafka/OpenSearch/Qdrant/Temporal; SCIM as live authz.
+**Out of v1:** customer-facing REST/MCP auth; agent write/send; attachment parsing beyond quarantine; third-party plugins; public NATS streams; OPA/Cedar/SpiceDB/Kafka/OpenSearch/Qdrant/Temporal; SCIM as live authz; always-on dense vectorization of evidence.
 
-See [ADR 0012](docs/adr/0012-v1-boundaries.md).
+See [ADR 0012](docs/adr/0012-v1-boundaries.md) and [ADR 0015](docs/adr/0015-sparse-first-retrieval-and-portable-mcp.md).
 
 ## License
 

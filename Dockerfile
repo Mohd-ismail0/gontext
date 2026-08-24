@@ -32,8 +32,13 @@ RUN apk add --no-cache ca-certificates wget \
 COPY --from=builder /out/context-fabric /usr/local/bin/context-fabric
 COPY migrations /migrations
 COPY contracts/openfga /contracts/openfga
+COPY scripts /scripts
 ENV MIGRATIONS_DIR=/migrations
 ENV OPENFGA_MODEL_PATH=/contracts/openfga/model.fga
+ENV OPENFGA_MODEL_JSON=/contracts/openfga/model.json
+# Ops roles (backup|restore|reconcile) invoke /scripts/*.sh when present.
+# Shell scripts require ash/bash on the host or a sidecar; the runtime image
+# ships the scripts for operator bind-mount / kubectl cp convenience.
 
 USER nonroot:nonroot
 EXPOSE 8080

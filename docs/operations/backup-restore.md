@@ -12,6 +12,16 @@ Context Fabric treats PostgreSQL as the authoritative ledger, S3-compatible obje
 | Config | profile + secret *references* | Never dump live secrets into the bundle |
 
 Org export manifests (`context-fabric.export/v1`) round-trip `graph_edges` and an `authz_tuples` relationship manifest (no secrets). Import re-enqueues AuthZ writes for active `sync_authz` parent edges.
+
+## Image notes
+
+The runtime Docker image copies `scripts/` to `/scripts` for operator convenience.
+Backup/restore/reconcile still need a shell and client tools (`pg_dump`, `aws`/`mc`,
+etc.) available in the execution environment — prefer running
+[`scripts/backup.sh`](../../scripts/backup.sh), [`scripts/restore.sh`](../../scripts/restore.sh),
+and [`scripts/reconcile.sh`](../../scripts/reconcile.sh) from an ops job with those
+dependencies, or via `context-fabric backup|restore|reconcile` when the role wraps them.
+
 ## Backup procedure
 
 1. Quiesce or snapshot writers when possible (`worker` drain).

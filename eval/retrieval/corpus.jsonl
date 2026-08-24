@@ -1,0 +1,5 @@
+{"id":"t01","task":"Find the billing dispute case for Acme","gold_resources":["case:acme-billing-42"],"query":"Acme billing dispute","route":"search","purpose":"support"}
+{"id":"t02","task":"Get known case by ID","gold_resources":["case:acme-billing-42"],"resource_id":"case:acme-billing-42","route":"get","purpose":"support"}
+{"id":"t03","task":"List parents of a message","gold_resources":["case:acme-billing-42","msg:1001"],"resource_id":"msg:1001","route":"graph","depth":1,"purpose":"support"}
+{"id":"t04","task":"Unknown jargon should abstain or low confidence","gold_resources":[],"query":"xyzzy-nonexistent-token-99","route":"search","purpose":"support","expect_abstain":true}
+{"id":"t05","task":"Multi-hop related_to from seed","gold_resources":["acct:acme","case:acme-billing-42"],"resource_id":"case:acme-billing-42","route":"graph","depth":2,"purpose":"account_management"}

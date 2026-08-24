@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -202,6 +203,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		exportJobs app.ExportJobStore
 		holds      deletion.LegalHoldChecker
 		feedStore  changes.FeedStore
+		pgPool     *postgres.Pool
 		cleanup    = func() {}
 		modelID    string
 	)
@@ -249,6 +251,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			return nil, nil, nil, nil, err
 		}
 		cleanup = pool.Close
+		pgPool = pool
 		pgStore := postgres.NewStore(pool)
 		ledger = pgStore
 		changesL = pgStore
@@ -256,6 +259,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		extras = pgStore
 		exportJobs = pgStore
 		feedStore = pgStore
+		creds = postgres.NewCredentialStore(pool)
 		auditLog = &audit.LedgerLogger{Writer: pgStore}
 		evidence = memory.NewEvidence()
 		if strings.TrimSpace(cfg.S3.Endpoint) != "" {
@@ -313,6 +317,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 				ClaimEmail:   cfg.OIDC.ClaimEmail,
 				ClaimGroups:  cfg.OIDC.ClaimGroups,
 				ClaimOrg:     cfg.OIDC.ClaimOrg,
+				ClaimScopes:  cfg.OIDC.ClaimScopes,
 			})
 			fga, err := openfga.NewFromEnv()
 			if err != nil {
@@ -370,9 +375,16 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		}
 	}
 
-	changeFeed := changes.New(feedStore, webhookSigningSecret())
+	secret, err := requireWebhookSigningSecret()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	changeFeed := changes.New(feedStore, secret)
 	if feedStore == nil && changesL != nil {
-		changeFeed = changes.New(changesL, webhookSigningSecret())
+		changeFeed = changes.New(changesL, secret)
+	}
+	if pgPool != nil {
+		changeFeed.Durable = postgres.NewWebhookStore(pgPool)
 	}
 	delSvc := &deletion.Service{
 		Ledger: ledger, Evidence: evidence, Index: index, Authz: authz,
@@ -422,7 +434,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 					migOK = false
 					migDetail = err.Error()
 				} else {
-					migDetail = "all migrations applied (005+ worker RLS helpers)"
+					migDetail = "all migrations applied (007+ FTS, outbox lease, credentials/webhooks)"
 				}
 			}
 			checks["migrations"] = map[string]any{"ok": migOK, "detail": migDetail}
@@ -641,7 +653,31 @@ func runDoctor() error {
 	if !migOK {
 		return fmt.Errorf("schema_migrations missing; run migrate")
 	}
+	var migCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migCount); err != nil {
+		fmt.Printf("doctor: schema_migrations count warning: %v\n", err)
+	} else {
+		fmt.Printf("doctor: schema_migrations count=%d (hint: compare to migrations/ files)\n", migCount)
+		if migCount == 0 {
+			return fmt.Errorf("schema_migrations empty; run migrate")
+		}
+	}
 	fmt.Println("doctor: schema_migrations ok")
+
+	var ftsOK bool
+	err = pool.QueryRow(ctx,
+		`SELECT EXISTS(
+		   SELECT 1 FROM information_schema.columns
+		   WHERE table_schema = 'public' AND table_name = 'search_documents' AND column_name = 'search_tsv'
+		 )`,
+	).Scan(&ftsOK)
+	if err != nil {
+		fmt.Printf("doctor: FTS column check warning: %v\n", err)
+	} else if ftsOK {
+		fmt.Println("doctor: search_documents.search_tsv present")
+	} else {
+		fmt.Println("doctor: search_documents.search_tsv missing (optional until migration 006)")
+	}
 
 	if url := strings.TrimSpace(os.Getenv("NATS_URL")); url != "" {
 		if b, err := natsbus.Connect(url); err != nil {
@@ -674,10 +710,30 @@ func runDoctor() error {
 		if err := validateOpenFGAStoreID(); err != nil {
 			return err
 		}
+		modelID := strings.TrimSpace(firstEnv("OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID", ""))
+		if modelID == "" || modelID == "demo-model-v1" {
+			if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
+				if b, err := os.ReadFile(path); err == nil {
+					modelID = strings.TrimSpace(string(b))
+				}
+			}
+		}
+		if modelID == "" || modelID == "demo-model-v1" {
+			return fmt.Errorf("OPENFGA_MODEL_ID unset or placeholder; run bootstrap to write and pin a model")
+		}
+		fmt.Printf("doctor: openfga model pin=%s\n", modelID)
 		if _, err := openfga.NewFromEnv(); err != nil {
 			return fmt.Errorf("openfga: %w", err)
 		}
 		fmt.Println("doctor: openfga config ok")
+	}
+
+	if allowMemoryAuth() || useMemory() {
+		fmt.Println("doctor: WEBHOOK_SIGNING_SECRET skipped (memory/demo)")
+	} else if strings.TrimSpace(os.Getenv("WEBHOOK_SIGNING_SECRET")) == "" {
+		return fmt.Errorf("WEBHOOK_SIGNING_SECRET required for non-demo profiles")
+	} else {
+		fmt.Println("doctor: WEBHOOK_SIGNING_SECRET set")
 	}
 
 	fmt.Println("doctor: connectivity ok")
@@ -702,9 +758,8 @@ func validateOpenFGAStoreID() error {
 	return nil
 }
 
-// bootstrapOpenFGA creates an OpenFGA store when possible and validates the pin.
-// Writing the full DSL model from contracts/openfga/model.fga requires the OpenFGA
-// transform tooling; we validate the model file exists and refuse placeholder store IDs.
+// bootstrapOpenFGA creates an OpenFGA store when possible, writes the JSON
+// authorization model when OPENFGA_MODEL_ID is empty, and validates the pin.
 func bootstrapOpenFGA(ctx context.Context) error {
 	api := strings.TrimSpace(firstEnv("OPENFGA_API_URL", "OPENFGA_URL", ""))
 	if api == "" {
@@ -716,10 +771,20 @@ func bootstrapOpenFGA(ctx context.Context) error {
 		os.Getenv("OPENFGA_MODEL_PATH"),
 		"contracts/openfga/model.fga",
 	)
+	modelJSONPath := firstNonEmpty(
+		os.Getenv("OPENFGA_MODEL_JSON"),
+		strings.TrimSuffix(modelPath, filepath.Ext(modelPath))+".json",
+		"contracts/openfga/model.json",
+	)
 	if _, err := os.Stat(modelPath); err != nil {
-		fmt.Printf("bootstrap: openfga model file missing at %s (%v)\n", modelPath, err)
+		fmt.Printf("bootstrap: openfga DSL model missing at %s (%v)\n", modelPath, err)
 	} else {
-		fmt.Printf("bootstrap: openfga model file present: %s\n", modelPath)
+		fmt.Printf("bootstrap: openfga DSL model present: %s\n", modelPath)
+	}
+	if _, err := os.Stat(modelJSONPath); err != nil {
+		fmt.Printf("bootstrap: openfga JSON model missing at %s (%v)\n", modelJSONPath, err)
+	} else {
+		fmt.Printf("bootstrap: openfga JSON model present: %s\n", modelJSONPath)
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -731,8 +796,7 @@ func bootstrapOpenFGA(ctx context.Context) error {
 				"replace-after-bootstrap", err,
 			)
 		}
-		fmt.Printf("bootstrap: created OpenFGA store id=%s — set OPENFGA_STORE_ID=%s and write model from %s\n",
-			created, created, modelPath)
+		fmt.Printf("bootstrap: created OpenFGA store id=%s — set OPENFGA_STORE_ID=%s\n", created, created)
 		store = created
 		if path := strings.TrimSpace(os.Getenv("OPENFGA_STORE_ID_FILE")); path != "" {
 			if err := os.WriteFile(path, []byte(store+"\n"), 0o644); err != nil {
@@ -749,13 +813,66 @@ func bootstrapOpenFGA(ctx context.Context) error {
 
 	modelID := strings.TrimSpace(firstEnv("OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID", ""))
 	if modelID == "" || modelID == "demo-model-v1" {
-		fmt.Println("bootstrap: write authorization model via OpenFGA CLI, e.g.")
-		fmt.Printf("  fga model write --store-id %s --file %s\n", store, modelPath)
-		fmt.Println("then pin OPENFGA_MODEL_ID to the returned model id")
+		written, err := openfgaWriteAuthorizationModel(ctx, client, api, store, modelJSONPath)
+		if err != nil {
+			return fmt.Errorf("write authorization model from %s: %w", modelJSONPath, err)
+		}
+		modelID = written
+		fmt.Printf("bootstrap: wrote authorization model id=%s — pin OPENFGA_MODEL_ID=%s\n", modelID, modelID)
+		if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
+			if err := os.WriteFile(path, []byte(modelID+"\n"), 0o644); err != nil {
+				return fmt.Errorf("write OPENFGA_MODEL_ID_FILE: %w", err)
+			}
+			fmt.Printf("bootstrap: wrote model id to %s\n", path)
+		}
 	} else {
 		fmt.Printf("bootstrap: OPENFGA_MODEL_ID=%s (ensure it matches a written model)\n", modelID)
 	}
 	return nil
+}
+
+func openfgaWriteAuthorizationModel(ctx context.Context, client *http.Client, apiURL, storeID, modelJSONPath string) (string, error) {
+	raw, err := os.ReadFile(modelJSONPath)
+	if err != nil {
+		return "", err
+	}
+	var probe map[string]any
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return "", fmt.Errorf("invalid model JSON: %w", err)
+	}
+	if _, ok := probe["type_definitions"]; !ok {
+		return "", fmt.Errorf("model JSON missing type_definitions")
+	}
+	apiURL = strings.TrimRight(apiURL, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL+"/stores/"+storeID+"/authorization-models", bytes.NewReader(raw))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := strings.TrimSpace(os.Getenv("OPENFGA_API_TOKEN")); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 300 {
+		return "", fmt.Errorf("status %d: %s", res.StatusCode, string(b))
+	}
+	var out struct {
+		AuthorizationModelID string `json:"authorization_model_id"`
+		ID                   string `json:"id"`
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return "", err
+	}
+	id := firstNonEmpty(out.AuthorizationModelID, out.ID)
+	if id == "" {
+		return "", fmt.Errorf("empty model id in response: %s", string(b))
+	}
+	return id, nil
 }
 
 func openfgaCreateStore(ctx context.Context, client *http.Client, apiURL, name string) (string, error) {
@@ -820,12 +937,21 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func webhookSigningSecret() []byte {
+func requireWebhookSigningSecret() ([]byte, error) {
 	s := strings.TrimSpace(os.Getenv("WEBHOOK_SIGNING_SECRET"))
-	if s == "" {
-		return nil
+	if s != "" {
+		return []byte(s), nil
 	}
-	return []byte(s)
+	if allowMemoryAuth() || useMemory() {
+		// Demo/memory only: ephemeral secret for local tests.
+		return []byte("demo-webhook-signing-secret"), nil
+	}
+	return nil, fmt.Errorf("WEBHOOK_SIGNING_SECRET is required for production profiles")
+}
+
+func webhookSigningSecret() []byte {
+	s, _ := requireWebhookSigningSecret()
+	return s
 }
 
 func firstEnv(keys ...string) string {

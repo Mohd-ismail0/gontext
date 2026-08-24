@@ -27,6 +27,7 @@ type Config struct {
 	NATS     NATSConfig
 	OpenFGA  OpenFGAConfig
 	OIDC     OIDCConfig
+	MCP      MCPConfig
 }
 
 // PostgresConfig holds ledger database settings.
@@ -77,7 +78,16 @@ type OIDCConfig struct {
 	ClaimEmail     string
 	ClaimGroups    string
 	ClaimOrg       string
+	ClaimScopes    string
 	ConnectionMode ConnectionMode
+}
+
+// MCPConfig holds OAuth protected-resource metadata for MCP (RFC 9728).
+type MCPConfig struct {
+	ResourceURL            string
+	AuthorizationServers   []string
+	ScopesSupported        []string
+	ResourceDocumentation  string
 }
 
 // Load reads configuration from the process environment.
@@ -126,7 +136,14 @@ func Load() (Config, error) {
 			ClaimEmail:     env("OIDC_CLAIM_EMAIL", "email"),
 			ClaimGroups:    env("OIDC_CLAIM_GROUPS", "groups"),
 			ClaimOrg:       env("OIDC_CLAIM_ORGANIZATION", "org_id"),
+			ClaimScopes:    env("OIDC_CLAIM_SCOPES", "scope"),
 			ConnectionMode: modeEnv("OIDC_CONNECTION_MODE", defaultMode()),
+		},
+		MCP: MCPConfig{
+			ResourceURL:           env("MCP_RESOURCE_URL", ""),
+			AuthorizationServers:  splitCSV(firstEnv("", "MCP_AUTHORIZATION_SERVERS", "OIDC_ISSUER")),
+			ScopesSupported:       splitCSV(env("MCP_SCOPES_SUPPORTED", "context:search,context:read,context:request_access")),
+			ResourceDocumentation: env("MCP_RESOURCE_DOCUMENTATION", "https://docs.context-fabric.io/mcp"),
 		},
 	}
 	if cfg.AuthzModelID == "" {
@@ -260,4 +277,19 @@ func boolEnv(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+func splitCSV(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

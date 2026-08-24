@@ -82,6 +82,11 @@ func (c *Client) BatchCheck(ctx context.Context, reqs []ports.AuthzCheck) ([]por
 	if len(reqs) == 0 {
 		return nil, nil
 	}
+	// Prefer native OpenFGA batch-check (one RTT per candidate set).
+	if out, err := c.batchCheckNative(ctx, reqs); err == nil {
+		return out, nil
+	}
+	// Fallback: sequential checks (older OpenFGA / partial outages).
 	out := make([]ports.AuthzDecision, len(reqs))
 	for i, r := range reqs {
 		allowed, err := c.checkOne(ctx, r)
@@ -94,6 +99,51 @@ func (c *Client) BatchCheck(ctx context.Context, reqs []ports.AuthzCheck) ([]por
 			Consistency:   r.Consistency,
 			ModelRevision: c.ModelID,
 			CheckedAt:     time.Now().UTC(),
+		}
+	}
+	return out, nil
+}
+
+func (c *Client) batchCheckNative(ctx context.Context, reqs []ports.AuthzCheck) ([]ports.AuthzDecision, error) {
+	checks := make([]map[string]any, 0, len(reqs))
+	for i, r := range reqs {
+		checks = append(checks, map[string]any{
+			"correlation_id": fmt.Sprintf("%d", i),
+			"tuple_key": map[string]string{
+				"user":     formatUser(r.Principal),
+				"relation": mapRelation(r.Action),
+				"object":   formatObject(r.ResourceID),
+			},
+			"consistency": ConsistencyPreference(r.Consistency),
+		})
+	}
+	payload := map[string]any{
+		"authorization_model_id": c.ModelID,
+		"checks":                 checks,
+	}
+	var resp struct {
+		Result map[string]struct {
+			Allowed bool   `json:"allowed"`
+			Error   *struct {
+				Message string `json:"message"`
+			} `json:"error,omitempty"`
+		} `json:"result"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/stores/%s/batch-check", c.StoreID), payload, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]ports.AuthzDecision, len(reqs))
+	now := time.Now().UTC()
+	for i, r := range reqs {
+		key := fmt.Sprintf("%d", i)
+		entry, ok := resp.Result[key]
+		allowed := ok && entry.Allowed && entry.Error == nil
+		out[i] = ports.AuthzDecision{
+			Allowed:       allowed,
+			ReasonCode:    reason(allowed),
+			Consistency:   r.Consistency,
+			ModelRevision: c.ModelID,
+			CheckedAt:     now,
 		}
 	}
 	return out, nil

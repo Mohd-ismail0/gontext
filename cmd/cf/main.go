@@ -37,6 +37,8 @@ func main() {
 		err = cmdOps(args)
 	case "conformance":
 		err = cmdConformance(args)
+	case "sandbox":
+		err = cmdSandbox(args)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -61,6 +63,7 @@ Usage:
   cf diagnose decision --org <id> --audit-id <id>
   cf ops lag|support-bundle --org <id>
   cf conformance run [--suite <path>] [--filter <case-id-substr>]
+  cf sandbox conformance --base-url <url> --token <bearer> [--org <id>]
 
 Environment:
   CONTEXT_FABRIC_URL   base URL (default http://127.0.0.1:8080)
@@ -99,6 +102,55 @@ func cmdConformance(args []string) error {
 	fmt.Printf("\nconformance %s: %d passed, %d failed, %d skipped\n", rep.SuiteID, passed, failed, skipped)
 	if failed > 0 || !rep.Passed() {
 		return fmt.Errorf("%d case(s) failed", failed)
+	}
+	return nil
+}
+
+func cmdSandbox(args []string) error {
+	if len(args) < 1 || args[0] != "conformance" {
+		return fmt.Errorf("usage: cf sandbox conformance --base-url <url> --token <bearer> [--org <id>]")
+	}
+	base := flagVal(args, "--base-url")
+	tok := flagVal(args, "--token")
+	org := flagVal(args, "--org")
+	if base == "" {
+		base = baseURL()
+	}
+	if tok == "" {
+		tok = token()
+	}
+	if base == "" {
+		return fmt.Errorf("--base-url (or CONTEXT_FABRIC_URL) required")
+	}
+	if tok == "" {
+		return fmt.Errorf("--token (or CONTEXT_FABRIC_TOKEN) required")
+	}
+	runner := conformance.NewRemoteRunner(conformance.RemoteOptions{
+		BaseURL: base,
+		Token:   tok,
+		OrgID:   org,
+	})
+	rep, err := runner.Run(context.Background())
+	if err != nil {
+		return err
+	}
+	var failed, skipped, passed int
+	for _, c := range rep.Checks {
+		switch {
+		case c.Skipped:
+			skipped++
+			fmt.Printf("SKIP  %s — %s\n", c.Name, c.Detail)
+		case c.Passed:
+			passed++
+			fmt.Printf("PASS  %s — %s\n", c.Name, c.Detail)
+		default:
+			failed++
+			fmt.Printf("FAIL  %s — %s\n", c.Name, c.Error)
+		}
+	}
+	fmt.Printf("\nsandbox conformance %s: %d passed, %d failed, %d skipped\n", rep.BaseURL, passed, failed, skipped)
+	if failed > 0 || !rep.Passed() {
+		return fmt.Errorf("%d check(s) failed", failed)
 	}
 	return nil
 }

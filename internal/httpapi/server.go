@@ -11,6 +11,7 @@ import (
 	"github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/export"
 	"github.com/xsama/context-fabric/internal/mcp"
+	"github.com/xsama/context-fabric/internal/observability"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -39,6 +40,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("GET /health/live", s.handleLive)
 	s.Mux.HandleFunc("GET /health/startup", s.handleStartup)
 	s.Mux.HandleFunc("GET /health/ready", s.handleReady)
+	s.Mux.Handle("GET /metrics", observability.Handler())
 	s.Mux.HandleFunc("GET /v1/system/version", s.handleVersion)
 	s.Mux.HandleFunc("GET /.well-known/oauth-protected-resource", s.handlePRM)
 	s.Mux.Handle("POST /mcp", s.authHandler(s.MCP.Handler()))
@@ -84,7 +86,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		raw := r.Header.Get("Authorization")
 		if strings.TrimSpace(raw) == "" {
-			writeErr(w, platform.ErrUnauthorized("missing Authorization header"))
+			writeUnauthorized(w, r, s)
 			return
 		}
 		next(w, r)
@@ -95,7 +97,7 @@ func (s *Server) authHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw := r.Header.Get("Authorization")
 		if strings.TrimSpace(raw) == "" {
-			writeErr(w, platform.ErrUnauthorized("missing Authorization header"))
+			writeUnauthorized(w, r, s)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -146,6 +148,10 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handlePRM(w http.ResponseWriter, r *http.Request) {
+	if s.MCP != nil {
+		writeJSON(w, http.StatusOK, s.MCP.ProtectedResourceMetadata(r))
+		return
+	}
 	writeJSON(w, http.StatusOK, mcp.ProtectedResourceMetadata(r))
 }
 
@@ -798,6 +804,16 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeUnauthorized(w http.ResponseWriter, r *http.Request, s *Server) {
+	resource := "mcp"
+	if s != nil && s.MCP != nil {
+		w.Header().Set("WWW-Authenticate", s.MCP.WWWAuthenticate(r))
+	} else {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="context-fabric", resource="`+resource+`"`)
+	}
+	writeErr(w, platform.ErrUnauthorized("missing Authorization header"))
 }
 
 func writeErr(w http.ResponseWriter, err error) {

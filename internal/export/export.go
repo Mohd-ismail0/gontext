@@ -99,9 +99,17 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 	now := s.now()
 	exportID := platform.NewEventID()
 
-	records, _, err := s.Ledger.ListRecords(ctx, orgID, 10_000, "")
+	const recordHardCap = 10_000
+	const edgeHardCap = 50_000
+
+	records, _, err := s.Ledger.ListRecords(ctx, orgID, recordHardCap, "")
 	if err != nil {
 		return Manifest{}, err
+	}
+	if len(records) >= recordHardCap {
+		return Manifest{}, platform.ErrValidation(
+			"export exceeds hard cap of 10000 records; use a bounded export job",
+		)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].ResourceID < records[j].ResourceID })
 
@@ -138,9 +146,14 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		records[i].Attributes = scrubSecrets(records[i].Attributes)
 	}
 
-	edges, err := s.Ledger.ListEdges(ctx, orgID, ports.EdgeListOptions{IncludeDead: true, Limit: 50_000})
+	edges, err := s.Ledger.ListEdges(ctx, orgID, ports.EdgeListOptions{IncludeDead: true, Limit: edgeHardCap})
 	if err != nil {
 		return Manifest{}, err
+	}
+	if len(edges) >= edgeHardCap {
+		return Manifest{}, platform.ErrValidation(
+			"export exceeds hard cap of 50000 edges; use a bounded export job",
+		)
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].EdgeID < edges[j].EdgeID })
 
