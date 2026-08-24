@@ -316,7 +316,11 @@ func gateScopes(scopes []string, action string, allowEmpty bool) error {
 		need = "context:search"
 	}
 	for _, s := range scopes {
-		if s == need || s == "context:read" || s == "context:search" {
+		if s == need {
+			return nil
+		}
+		// Broader read scope satisfies search (OAuth privilege hierarchy).
+		if need == "context:search" && s == "context:read" {
 			return nil
 		}
 	}
@@ -421,6 +425,19 @@ func (p *Pipeline) Graph(ctx context.Context, req Request) (ports.ContextPacket,
 		return ports.ContextPacket{}, platform.ErrForbidden("organization mismatch")
 	}
 
+	// Delegation constraints (same as Search) — revoke/expiry/purpose before disclosure.
+	if req.Delegation != nil {
+		if req.Delegation.Revoked {
+			return ports.ContextPacket{}, platform.ErrForbidden("delegation revoked")
+		}
+		if req.Delegation.ExpiresAt != nil && time.Now().After(*req.Delegation.ExpiresAt) {
+			return ports.ContextPacket{}, platform.ErrForbidden("delegation expired")
+		}
+		if len(req.Delegation.Purposes) > 0 && !contains(req.Delegation.Purposes, req.Purpose) {
+			return ports.ContextPacket{}, platform.ErrForbidden("purpose outside delegation")
+		}
+	}
+
 	scopes := principal.Scopes
 	if len(scopes) == 0 {
 		scopes = req.Scopes
@@ -464,21 +481,9 @@ func (p *Pipeline) Graph(ctx context.Context, req Request) (ports.ContextPacket,
 	}
 
 	nodes, edges, truncated := p.visibleSubgraph(ctx, principal, req, []string{req.ResourceID}, req.Depth, req.Predicates)
-	if req.MaxNodes > 0 && len(nodes) > req.MaxNodes {
+	nodes, edges, trunc2 := truncateGraphPreserveSeeds(nodes, edges, []string{req.ResourceID}, req.MaxNodes)
+	if trunc2 {
 		truncated = true
-		sort.Slice(nodes, func(i, j int) bool { return nodes[i].ResourceID < nodes[j].ResourceID })
-		nodes = nodes[:req.MaxNodes]
-		allowed := map[string]bool{}
-		for _, n := range nodes {
-			allowed[n.ResourceID] = true
-		}
-		filtered := edges[:0]
-		for _, e := range edges {
-			if allowed[e.FromID] && allowed[e.ToID] {
-				filtered = append(filtered, e)
-			}
-		}
-		edges = filtered
 	}
 
 	citations := make([]ports.Citation, 0, len(nodes))
@@ -591,6 +596,7 @@ func (p *Pipeline) batchAllow(ctx context.Context, principal ports.Principal, re
 
 // visibleSubgraph returns the caller's final visible subgraph after AuthZ and policy.
 // Edges are filtered against the surviving node set only (ADR 0013).
+// Nodes are returned in BFS discovery order (seeds first) for stable truncation.
 func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principal, req Request, seeds []string, depth int, predicates []string) ([]ports.GraphNode, []ports.GraphEdge, bool) {
 	const edgeCap = 500
 	truncated := false
@@ -607,6 +613,7 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 	}
 	sort.Strings(seedIDs)
 	authzOK := map[string]bool{}
+	discovery := make([]string, 0, len(seedIDs))
 	if len(seedIDs) > 0 {
 		ok, _, err := p.batchAllow(ctx, principal, req, seedIDs)
 		if err != nil {
@@ -615,14 +622,11 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		for _, id := range seedIDs {
 			if ok[id] {
 				authzOK[id] = true
+				discovery = append(discovery, id)
 			}
 		}
 	}
-	frontier := make([]string, 0, len(authzOK))
-	for id := range authzOK {
-		frontier = append(frontier, id)
-	}
-	sort.Strings(frontier)
+	frontier := append([]string{}, discovery...)
 
 	for hop := 0; hop < depth; hop++ {
 		if len(frontier) == 0 {
@@ -665,20 +669,17 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		for _, id := range neighbors {
 			if ok[id] {
 				authzOK[id] = true
+				discovery = append(discovery, id)
 				next = append(next, id)
 			}
 		}
 		frontier = next
 	}
 
-	// Hydrate + policy: build final visible set.
+	// Hydrate + policy in discovery order.
 	visible := map[string]ports.GraphNode{}
-	ids := make([]string, 0, len(authzOK))
-	for id := range authzOK {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
+	orderedIDs := make([]string, 0, len(discovery))
+	for _, id := range discovery {
 		rec, err := p.Ledger.GetRecord(ctx, req.OrgID, id)
 		if err != nil || deletion.IsTombstoned(rec.State) {
 			continue
@@ -706,16 +707,11 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 			State:          rec.State,
 			Attributes:     sanitizeNodeAttrs(rec.Attributes),
 		}
+		orderedIDs = append(orderedIDs, id)
 	}
-
-	visIDs := make([]string, 0, len(visible))
-	for id := range visible {
-		visIDs = append(visIDs, id)
-	}
-	sort.Strings(visIDs)
 
 	ledgerEdges, err := p.Ledger.ListEdges(ctx, req.OrgID, ports.EdgeListOptions{
-		ResourceIDs: visIDs,
+		ResourceIDs: orderedIDs,
 		Predicates:  predicates,
 		Limit:       edgeCap + 1,
 	})
@@ -750,11 +746,57 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		return finalEdges[i].ToID < finalEdges[j].ToID
 	})
 
-	nodes := make([]ports.GraphNode, 0, len(visIDs))
-	for _, id := range visIDs {
+	nodes := make([]ports.GraphNode, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
 		nodes = append(nodes, visible[id])
 	}
 	return nodes, finalEdges, truncated
+}
+
+// truncateGraphPreserveSeeds caps node count while always retaining authorized seeds,
+// then fills remaining slots in BFS discovery order (industry: seed-stable neighborhood pages).
+func truncateGraphPreserveSeeds(nodes []ports.GraphNode, edges []ports.GraphEdge, seeds []string, maxNodes int) ([]ports.GraphNode, []ports.GraphEdge, bool) {
+	if maxNodes <= 0 || len(nodes) <= maxNodes {
+		return nodes, edges, false
+	}
+	seedSet := map[string]bool{}
+	for _, s := range seeds {
+		if s != "" {
+			seedSet[s] = true
+		}
+	}
+	keep := map[string]bool{}
+	out := make([]ports.GraphNode, 0, maxNodes)
+	// Pass 1: seeds present in the result.
+	for _, n := range nodes {
+		if seedSet[n.ResourceID] && !keep[n.ResourceID] {
+			keep[n.ResourceID] = true
+			out = append(out, n)
+			if len(out) >= maxNodes {
+				break
+			}
+		}
+	}
+	// Pass 2: BFS/discovery order for the remainder.
+	if len(out) < maxNodes {
+		for _, n := range nodes {
+			if keep[n.ResourceID] {
+				continue
+			}
+			keep[n.ResourceID] = true
+			out = append(out, n)
+			if len(out) >= maxNodes {
+				break
+			}
+		}
+	}
+	filtered := edges[:0]
+	for _, e := range edges {
+		if keep[e.FromID] && keep[e.ToID] {
+			filtered = append(filtered, e)
+		}
+	}
+	return out, filtered, true
 }
 
 func sanitizeNodeAttrs(in map[string]string) map[string]string {

@@ -263,6 +263,7 @@ func (w *Worker) reconcileLoop(ctx context.Context) {
 }
 
 // reconcileOnce re-enqueues missing AuthZ writes for active parent edges with sync_authz.
+// Compares ledger edges against pending outbox work and OpenFGA (when RelationshipInspector is available).
 func (w *Worker) reconcileOnce(ctx context.Context) error {
 	if w.Ledger == nil {
 		return nil
@@ -271,16 +272,37 @@ func (w *Worker) reconcileOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	inspector, _ := w.Authz.(ports.RelationshipInspector)
 	now := time.Now().UTC()
 	for _, e := range edges {
 		object := "resource:" + e.FromID
 		subject := "resource:" + e.ToID
-		ok, err := w.Ledger.HasAuthzTupleCoverage(ctx, e.OrgID, "write", object, "parent", subject)
+		pending, err := w.Ledger.HasAuthzTuplePending(ctx, e.OrgID, "write", object, "parent", subject)
 		if err != nil {
 			return err
 		}
-		if ok {
+		if pending {
 			continue
+		}
+		if inspector != nil {
+			exists, err := inspector.HasTuple(ctx, ports.RelationshipTuple{
+				Object: object, Relation: "parent", Subject: subject,
+			})
+			if err != nil {
+				return err
+			}
+			if exists {
+				continue
+			}
+		} else {
+			// Without an inspector, fall back to outbox coverage (pending|applied).
+			ok, err := w.Ledger.HasAuthzTupleCoverage(ctx, e.OrgID, "write", object, "parent", subject)
+			if err != nil {
+				return err
+			}
+			if ok {
+				continue
+			}
 		}
 		_ = w.Ledger.WithOrgTx(ctx, e.OrgID, func(ctx context.Context, tx ports.Tx) error {
 			return w.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{

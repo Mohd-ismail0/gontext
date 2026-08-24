@@ -11,11 +11,12 @@ Knowledge `parent` edges require matching OpenFGA `parent` tuples for ACL inheri
 ## Decision
 
 1. **Transactional outbox for AuthZ tuples.** When a knowledge `parent` edge with `sync_authz_parent=true` is written, enqueue an AuthZ tuple operation in the **same** ledger transaction (`authz_tuple_outbox`). Never call OpenFGA from the request path after commit.
-2. **Worker applies tuples with lease + backoff.** A background worker claims pending rows, calls `RelationshipWriter.WriteTuples`, marks applied on success, and retries with exponential backoff on failure. Dead-letter after max attempts remains observable via ops/readiness.
-3. **Reconciliation.** Periodically compare active parent edges requiring inheritance against applied outbox rows / OpenFGA and re-enqueue missing work.
+2. **Worker applies tuples with lease + backoff.** A background worker claims pending rows via **SECURITY DEFINER** SQL helpers (so `context_gateway` stays `NOBYPASSRLS`), calls `RelationshipWriter.WriteTuples`, marks applied on success, and retries with exponential backoff on failure. Dead-letter after max attempts remains observable via ops/readiness.
+3. **Reconciliation.** Periodically compare active parent edges requiring inheritance against **pending outbox rows and OpenFGA** (`RelationshipInspector.HasTuple`); re-enqueue when the tuple is missing from OpenFGA even if an older outbox row is `applied`.
 4. **Idempotency.** Duplicate intake returns the committed result; pending AuthZ work continues independently. Tuple writes must tolerate already-exists duplicates.
 5. **Deletes/tombstones.** Tombstoning a knowledge parent edge enqueues a delete tuple operation so inheritance is revoked.
-6. **Fail-closed readiness.** Serve readiness fails if AuthZ outbox lag exceeds SLO or the OpenFGA writer is unavailable when parent sync is required.
+6. **Fail-closed readiness.** Serve readiness fails if AuthZ outbox dead-letters exist, pending lag exceeds `AUTHZ_OUTBOX_PENDING_MAX` (default 500), or the OpenFGA writer is unavailable when parent sync is required.
+7. **ACL non-broadening.** `sync_authz_parent` is opt-in and allowed only when the parent target is listed in the source `allowed_visibility_refs` (MappingSpec cannot mint inheritance to arbitrary parents).
 
 ## Consequences
 

@@ -54,6 +54,7 @@ func NewFromEnv() (*Client, error) {
 var (
 	_ ports.AuthorizationProvider = (*Client)(nil)
 	_ ports.RelationshipWriter    = (*Client)(nil)
+	_ ports.RelationshipInspector = (*Client)(nil)
 )
 
 // ConsistencyPreference maps ports.ConsistencyMode to OpenFGA preference strings.
@@ -149,6 +150,27 @@ func (c *Client) WriteTuples(ctx context.Context, tuples []ports.RelationshipTup
 // DeleteTuples implements ports.RelationshipWriter via OpenFGA /write deletes.
 func (c *Client) DeleteTuples(ctx context.Context, tuples []ports.RelationshipTuple) error {
 	return c.mutateTuples(ctx, tuples, true)
+}
+
+// HasTuple implements ports.RelationshipInspector via OpenFGA /read.
+func (c *Client) HasTuple(ctx context.Context, tuple ports.RelationshipTuple) (bool, error) {
+	if tuple.Object == "" || tuple.Relation == "" || tuple.Subject == "" {
+		return false, nil
+	}
+	payload := map[string]any{
+		"tuple_key": map[string]string{
+			"user":     tuple.Subject,
+			"relation": tuple.Relation,
+			"object":   tuple.Object,
+		},
+	}
+	var resp struct {
+		Tuples []json.RawMessage `json:"tuples"`
+	}
+	if err := c.postJSON(ctx, fmt.Sprintf("/stores/%s/read", c.StoreID), payload, &resp); err != nil {
+		return false, err
+	}
+	return len(resp.Tuples) > 0, nil
 }
 
 func (c *Client) mutateTuples(ctx context.Context, tuples []ports.RelationshipTuple, delete bool) error {

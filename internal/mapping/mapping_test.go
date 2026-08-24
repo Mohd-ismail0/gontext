@@ -192,6 +192,42 @@ func TestRejectVisibilityACLBroadening(t *testing.T) {
 	}
 }
 
+func TestRejectSyncAuthzParentWithoutAllowlist(t *testing.T) {
+	sync := true
+	spec := mapping.Spec{
+		OrganizationID: "org1",
+		Mappings: mapping.FieldMappings{
+			ResourceID:      &mapping.Expr{Expr: `"res-child"`},
+			ResourceType:    &mapping.Expr{Expr: `"message"`},
+			Classification:  &mapping.Expr{Expr: `"internal"`},
+			Trust:           &mapping.Expr{Expr: `"trusted_internal"`},
+			SourceAuthority: &mapping.Expr{Expr: `"corroborating"`},
+			Timestamps:      mapping.TimestampMappings{},
+		},
+		Edges: []mapping.EdgeMapping{{
+			Predicate:       &mapping.Expr{Expr: `"parent"`},
+			To:              &mapping.Expr{Expr: `"res-parent-unlisted"`},
+			SyncAuthzParent: &sync,
+		}},
+		Constraints: mapping.Constraints{
+			CannotMintOrganization:     true,
+			CannotBroadenACL:           true,
+			AuthorityCeilingFromSource: true,
+			ClientFieldsMayOnlyNarrow:  true,
+		},
+	}
+	_, err := mapping.Apply(spec, map[string]any{}, mapping.SourceCeilings{
+		OrganizationID:        "org1",
+		TrustCeiling:          "trusted_system",
+		AuthorityCeiling:      "source_of_truth",
+		ClassificationCeiling: "confidential",
+		AllowedVisibilityRefs: []string{"resource:res-other"},
+	}, mapping.Options{})
+	if err == nil {
+		t.Fatal("expected sync_authz_parent ACL rejection")
+	}
+}
+
 func TestRejectClassificationAboveCeiling(t *testing.T) {
 	spec := mapping.Spec{
 		OrganizationID: "org1",

@@ -25,6 +25,12 @@ type RelationshipWriter interface {
 	DeleteTuples(ctx context.Context, tuples []RelationshipTuple) error
 }
 
+// RelationshipInspector reads whether a tuple currently exists (reconcile / repair).
+// Optional: workers type-assert; absence disables OpenFGA-side reconcile.
+type RelationshipInspector interface {
+	HasTuple(ctx context.Context, tuple RelationshipTuple) (bool, error)
+}
+
 // RelationshipTuple is one OpenFGA-shaped relationship.
 type RelationshipTuple struct {
 	Object   string `json:"object"`
@@ -159,6 +165,8 @@ type LedgerStore interface {
 	ListActiveParentEdgesNeedingAuthz(ctx context.Context, orgID string, limit int) ([]GraphEdge, error)
 	// HasAuthzTupleCoverage reports whether a write/delete for the tuple is pending or applied.
 	HasAuthzTupleCoverage(ctx context.Context, orgID, operation, object, relation, subject string) (bool, error)
+	// HasAuthzTuplePending reports whether a matching pending outbox row exists.
+	HasAuthzTuplePending(ctx context.Context, orgID, operation, object, relation, subject string) (bool, error)
 }
 
 // EdgeListOptions filters knowledge-graph edge queries.

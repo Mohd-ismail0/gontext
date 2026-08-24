@@ -70,6 +70,16 @@ func TestGraphBoundedCyclicGraph(t *testing.T) {
 	if !pkt.Truncated {
 		t.Fatal("expected truncated when max_nodes < cycle size")
 	}
+	seedSeen := false
+	for _, n := range pkt.Nodes {
+		if n.ResourceID == "n0" {
+			seedSeen = true
+			break
+		}
+	}
+	if !seedSeen {
+		t.Fatal("seed node must be retained when max_nodes truncates")
+	}
 	for _, e := range pkt.Edges {
 		seen := map[string]bool{}
 		for _, n := range pkt.Nodes {

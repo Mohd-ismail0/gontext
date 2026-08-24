@@ -878,6 +878,28 @@ func (s *Store) HasAuthzTupleCoverage(_ context.Context, orgID, operation, objec
 	return false, nil
 }
 
+func (s *Store) HasAuthzTuplePending(_ context.Context, orgID, operation, object, relation, subject string) (bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if operation == "" {
+		operation = "write"
+	}
+	for oid, m := range s.authzTuples {
+		if orgID != "" && oid != orgID {
+			continue
+		}
+		for _, op := range m {
+			if op.Operation != operation {
+				continue
+			}
+			if op.Object == object && op.Relation == relation && op.Subject == subject && op.Status == "pending" {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
 // AppendAudit implements audit.LedgerWriter.
 func (s *Store) AppendAudit(_ context.Context, event ports.AuditEvent) error {
 	s.mu.Lock()

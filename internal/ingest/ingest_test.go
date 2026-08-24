@@ -174,6 +174,10 @@ func TestIntakeEmitsParentEdgeFromVisibilityRef(t *testing.T) {
 
 func TestIntakeParentResourceIDEnqueuesAuthzOutbox(t *testing.T) {
 	svc, ledger, src := setup(t)
+	src.AllowedVisibilityRefs = []string{"resource:res-parent-authz", "res-parent-authz"}
+	_ = ledger.WithOrgTx(context.Background(), "org1", func(ctx context.Context, tx ports.Tx) error {
+		return ledger.UpsertSource(ctx, tx, src)
+	})
 	authz := openfga.NewMemory()
 	req := signedReq(t, src.SigningSecret, map[string]any{
 		"data": map[string]any{
@@ -189,6 +193,12 @@ func TestIntakeParentResourceIDEnqueuesAuthzOutbox(t *testing.T) {
 		},
 	}, "idem-edge-authz")
 	req.Mapping.Mappings.ParentResourceID = &mapping.Expr{Expr: "$.data.parent_resource_id"}
+	// Opt-in AuthZ inheritance requires explicit sync + allowlisted parent.
+	req.Mapping.Edges = []mapping.EdgeMapping{{
+		Predicate:       &mapping.Expr{Expr: `"parent"`},
+		To:              &mapping.Expr{Expr: "$.data.parent_resource_id"},
+		SyncAuthzParent: boolPtr(true),
+	}}
 	if _, err := svc.Intake(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}

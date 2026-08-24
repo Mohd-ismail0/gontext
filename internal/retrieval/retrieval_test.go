@@ -319,3 +319,51 @@ func TestGraphParentInheritance(t *testing.T) {
 		t.Fatal("child should inherit can_read from parent AuthZ tuple")
 	}
 }
+
+type searchOnlyIdentity struct{}
+
+func (searchOnlyIdentity) Discover(context.Context) (ports.OIDCMetadata, error) {
+	return ports.OIDCMetadata{}, nil
+}
+
+func (searchOnlyIdentity) Authenticate(_ context.Context, _ ports.Credentials) (ports.Principal, error) {
+	return ports.Principal{
+		ID: "local|searcher", Kind: ports.PrincipalKindUser, OrgID: "org_scope",
+		Subject: "searcher", Scopes: []string{"context:search"},
+	}, nil
+}
+
+func TestGraphRequiresReadScope(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	authz := openfga.NewMemory()
+	org := "org_scope"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Scope"})
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		return store.UpsertRecord(ctx, tx, ports.Record{
+			ResourceID: "seed", OrgID: org, Kind: "note", Title: "s",
+			Classification: "internal", CurrentRevID: "r1", State: "INDEXED",
+		})
+	})
+	authz.AddOrgMember(org, "searcher")
+	authz.Grant("resource:seed", "reader", "user:searcher")
+
+	pipe := &retrieval.Pipeline{
+		Identity: searchOnlyIdentity{},
+		Authz:    authz,
+		Policy:   policy.New(),
+		Ledger:   store,
+		Index:    memory.NewIndex(),
+		Audit:    audit.NewMemory(),
+	}
+	_, err := pipe.Graph(ctx, retrieval.Request{
+		Credentials: ports.Credentials{BearerToken: "unused"},
+		OrgID:       org,
+		Purpose:     "support",
+		ResourceID:  "seed",
+		Action:      "context.graph",
+	})
+	if err == nil {
+		t.Fatal("context:search alone must not authorize context.graph")
+	}
+}

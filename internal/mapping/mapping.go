@@ -275,6 +275,9 @@ func Apply(spec Spec, payload map[string]any, ceilings SourceCeilings, opts Opti
 	if err != nil {
 		return Canonical{}, err
 	}
+	if err := enforceParentAuthzSync(edges, ceilings, spec.Constraints); err != nil {
+		return Canonical{}, err
+	}
 	out.Edges = edges
 
 	return out, nil
@@ -290,6 +293,18 @@ func resolveEdges(spec Spec, payload map[string]any, out Canonical) ([]Canonical
 		}
 		key := e.FromID + "|" + e.Predicate + "|" + e.ToID
 		if seen[key] {
+			// Prefer AuthZ sync if any mapping entry requests it for the same triple.
+			for i := range edges {
+				if edges[i].FromID == e.FromID && edges[i].ToID == e.ToID && edges[i].Predicate == e.Predicate {
+					if e.SyncAuthzParent {
+						edges[i].SyncAuthzParent = true
+					}
+					if e.EnsureEndpoints {
+						edges[i].EnsureEndpoints = true
+					}
+					return
+				}
+			}
 			return
 		}
 		seen[key] = true
@@ -299,7 +314,8 @@ func resolveEdges(spec Spec, payload map[string]any, out Canonical) ([]Canonical
 		edges = append(edges, e)
 	}
 
-	// Convenience parent_resource_id mapping.
+	// Convenience parent_resource_id mapping — knowledge edge only by default.
+	// AuthZ inheritance requires explicit edges[].sync_authz_parent=true + allowlisted parent.
 	if parentID, err := evalString(spec.Mappings.ParentResourceID, payload); err != nil {
 		return nil, err
 	} else if parentID != "" {
@@ -309,7 +325,7 @@ func resolveEdges(spec Spec, payload map[string]any, out Canonical) ([]Canonical
 			Predicate:       ports.EdgeParent,
 			Confidence:      1,
 			EnsureEndpoints: true,
-			SyncAuthzParent: true,
+			SyncAuthzParent: false,
 			ToKind:          "container",
 		})
 	}
@@ -352,10 +368,8 @@ func resolveEdges(spec Spec, payload map[string]any, out Canonical) ([]Canonical
 		if em.EnsureEndpoints != nil {
 			ensure = *em.EnsureEndpoints
 		}
+		// Opt-in AuthZ sync only (fail-closed default): inheritance broadens ACL.
 		syncParent := false
-		if strings.EqualFold(pred, ports.EdgeParent) {
-			syncParent = true
-		}
 		if em.SyncAuthzParent != nil {
 			syncParent = *em.SyncAuthzParent
 		}
@@ -524,6 +538,48 @@ func enforceCeilings(out Canonical, ceilings SourceCeilings) error {
 		}
 	}
 	return nil
+}
+
+// enforceParentAuthzSync fail-closes AuthZ inheritance edges under cannot_broaden_acl.
+// Knowledge parent edges remain allowed; sync_authz_parent requires an allowlisted parent target.
+func enforceParentAuthzSync(edges []CanonicalEdge, ceilings SourceCeilings, c Constraints) error {
+	cannotBroaden := c.CannotBroadenACL || c == (Constraints{})
+	if !cannotBroaden {
+		return nil
+	}
+	for _, e := range edges {
+		if !e.SyncAuthzParent {
+			continue
+		}
+		if !parentAllowedForAuthzSync(e.ToID, ceilings.AllowedVisibilityRefs) {
+			return platform.ErrForbidden("sync_authz_parent broadens ACL; parent must be listed in source allowed_visibility_refs")
+		}
+	}
+	return nil
+}
+
+func parentAllowedForAuthzSync(parentID string, allowlist []string) bool {
+	if parentID == "" || len(allowlist) == 0 {
+		return false
+	}
+	candidates := []string{parentID, "resource:" + parentID}
+	for _, ref := range allowlist {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		object := ref
+		if i := strings.IndexByte(ref, '#'); i >= 0 {
+			object = ref[:i]
+		}
+		object = strings.TrimSpace(object)
+		for _, c := range candidates {
+			if ref == c || object == c || object == parentID || strings.TrimPrefix(object, "resource:") == parentID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RankTrust orders trust tiers; higher means more trusted. Unknown values return -1.

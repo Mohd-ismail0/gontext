@@ -31,6 +31,7 @@ func NewMemory() *Memory {
 var (
 	_ ports.AuthorizationProvider = (*Memory)(nil)
 	_ ports.RelationshipWriter    = (*Memory)(nil)
+	_ ports.RelationshipInspector = (*Memory)(nil)
 )
 
 // Grant adds a relationship tuple. Prefer model-writable relations (reader, owner, parent, member).
@@ -98,6 +99,13 @@ func (m *Memory) DeleteTuples(_ context.Context, tuples []ports.RelationshipTupl
 		m.Revoke(t.Object, t.Relation, t.Subject)
 	}
 	return nil
+}
+
+// HasTuple implements ports.RelationshipInspector.
+func (m *Memory) HasTuple(_ context.Context, tuple ports.RelationshipTuple) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.has(tuple.Object, tuple.Relation, tuple.Subject), nil
 }
 
 // AddOrgMember marks a principal as an organization member.

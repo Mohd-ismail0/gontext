@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -419,7 +420,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 					migOK = false
 					migDetail = err.Error()
 				} else {
-					migDetail = "all migrations applied (004+ authz outbox)"
+					migDetail = "all migrations applied (005+ worker RLS helpers)"
 				}
 			}
 			checks["migrations"] = map[string]any{"ok": migOK, "detail": migDetail}
@@ -440,15 +441,23 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			checks["authz_tuple_writer"] = map[string]any{"ok": tupleWriterOK, "detail": tupleWriterDetail}
 
 			pending, dead, outboxErr := ledger.CountAuthzTuplePending(context.Background(), "")
-			outboxOK := outboxErr == nil && dead == 0
-			outboxDetail := fmt.Sprintf("pending=%d dead=%d", pending, dead)
+			maxPending := 500
+			if v := strings.TrimSpace(os.Getenv("AUTHZ_OUTBOX_PENDING_MAX")); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+					maxPending = n
+				}
+			}
+			outboxOK := outboxErr == nil && dead == 0 && pending <= maxPending
+			outboxDetail := fmt.Sprintf("pending=%d dead=%d max_pending=%d", pending, dead, maxPending)
 			if outboxErr != nil {
 				outboxOK = false
 				outboxDetail = outboxErr.Error()
 			} else if dead > 0 {
 				outboxDetail = fmt.Sprintf("dead-letter AuthZ tuples present (%d); pending=%d", dead, pending)
+			} else if pending > maxPending {
+				outboxDetail = fmt.Sprintf("AuthZ outbox lag exceeds SLO: pending=%d max=%d", pending, maxPending)
 			}
-			checks["authz_outbox"] = map[string]any{"ok": outboxOK, "detail": outboxDetail, "pending": pending, "dead": dead}
+			checks["authz_outbox"] = map[string]any{"ok": outboxOK, "detail": outboxDetail, "pending": pending, "dead": dead, "max_pending": maxPending}
 
 			ready := migOK && authzOK && tupleWriterOK && outboxOK
 			return ready, checks

@@ -241,9 +241,7 @@ func (s *Store) ClaimOutbox(ctx context.Context, limit int) ([]ports.OutboxEntry
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := s.pool.Query(ctx, `
-SELECT id, organization_id, subject, payload, headers, created_at, published_at
-FROM outbox WHERE published_at IS NULL ORDER BY created_at ASC LIMIT $1`, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id, organization_id, subject, payload, headers, created_at, published_at FROM claim_outbox_batch($1)`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -298,7 +296,7 @@ FROM outbox WHERE published_at IS NULL`
 }
 
 func (s *Store) MarkOutboxPublished(ctx context.Context, ids []string, at time.Time) error {
-	_, err := s.pool.Exec(ctx, `UPDATE outbox SET published_at=$1 WHERE id = ANY($2)`, at, ids)
+	_, err := s.pool.Exec(ctx, `SELECT mark_outbox_published_batch($1, $2)`, ids, at)
 	return err
 }
 
@@ -744,19 +742,9 @@ func (s *Store) ClaimAuthzTuples(ctx context.Context, limit int, lease time.Dura
 	}
 	var out []ports.AuthzTupleOp
 	rows, err := s.pool.Query(ctx, `
-UPDATE authz_tuple_outbox SET lease_until=$1, updated_at=now()
-WHERE id IN (
-  SELECT id FROM authz_tuple_outbox
-  WHERE status='pending'
-    AND next_attempt <= now()
-    AND (lease_until IS NULL OR lease_until < now())
-  ORDER BY next_attempt ASC
-  LIMIT $2
-  FOR UPDATE SKIP LOCKED
-)
-RETURNING id, organization_id, operation, object, relation, subject, COALESCE(edge_id,''), status, attempts,
-          COALESCE(last_error,''), lease_until, next_attempt, created_at, updated_at, applied_at`,
-		time.Now().UTC().Add(lease), limit)
+SELECT id, organization_id, operation, object, relation, subject, edge_id, status, attempts,
+       last_error, lease_until, next_attempt, created_at, updated_at, applied_at
+FROM claim_authz_tuple_outbox($1, $2::interval)`, limit, fmt.Sprintf("%d seconds", int(lease.Seconds())))
 	if err != nil {
 		return nil, err
 	}
@@ -773,85 +761,42 @@ RETURNING id, organization_id, operation, object, relation, subject, COALESCE(ed
 }
 
 func (s *Store) MarkAuthzTupleApplied(ctx context.Context, id string, at time.Time) error {
-	ct, err := s.pool.Exec(ctx, `
-UPDATE authz_tuple_outbox SET status='applied', applied_at=$1, lease_until=NULL, last_error='', updated_at=$1
-WHERE id=$2`, at, id)
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT mark_authz_tuple_applied($1, $2)`, id, at).Scan(&ok)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if !ok {
 		return platform.ErrNotFound("authz tuple not found")
 	}
 	return nil
 }
 
 func (s *Store) MarkAuthzTupleFailed(ctx context.Context, id string, attempts int, next time.Time, errMsg string, dead bool) error {
-	status := "pending"
-	if dead {
-		status = "dead"
-	}
-	ct, err := s.pool.Exec(ctx, `
-UPDATE authz_tuple_outbox SET status=$1, attempts=$2, next_attempt=$3, last_error=$4, lease_until=NULL, updated_at=now()
-WHERE id=$5`, status, attempts, next, errMsg, id)
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT mark_authz_tuple_failed($1, $2, $3, $4, $5)`, id, attempts, next, errMsg, dead).Scan(&ok)
 	if err != nil {
 		return err
 	}
-	if ct.RowsAffected() == 0 {
+	if !ok {
 		return platform.ErrNotFound("authz tuple not found")
 	}
 	return nil
 }
 
 func (s *Store) CountAuthzTuplePending(ctx context.Context, orgID string) (int, int, error) {
-	var pending, dead int
-	q := `SELECT
-  COUNT(*) FILTER (WHERE status='pending'),
-  COUNT(*) FILTER (WHERE status='dead')
-FROM authz_tuple_outbox`
-	args := []any{}
-	if orgID != "" {
-		q += ` WHERE organization_id=$1`
-		args = append(args, orgID)
-	}
-	err := s.pool.QueryRow(ctx, q, args...).Scan(&pending, &dead)
-	return pending, dead, err
+	var pending, dead int64
+	err := s.pool.QueryRow(ctx, `SELECT pending, dead FROM count_authz_tuple_outbox($1)`, orgID).Scan(&pending, &dead)
+	return int(pending), int(dead), err
 }
 
 func (s *Store) ListActiveParentEdgesNeedingAuthz(ctx context.Context, orgID string, limit int) ([]ports.GraphEdge, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	if orgID != "" {
-		var out []ports.GraphEdge
-		err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
-			rows, err := tx.Query(ctx, `
-SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, COALESCE(sync_authz,false), attributes, created_at, updated_at
-FROM graph_edges
-WHERE organization_id=$1 AND lifecycle_state='ACTIVE' AND predicate='parent' AND sync_authz=true
-ORDER BY created_at ASC LIMIT $2`, orgID, limit)
-			if err != nil {
-				return err
-			}
-			defer rows.Close()
-			for rows.Next() {
-				var e ports.GraphEdge
-				var attrs []byte
-				if err := rows.Scan(&e.EdgeID, &e.OrgID, &e.FromID, &e.ToID, &e.Predicate, &e.Confidence, &e.State, &e.SyncAuthz, &attrs, &e.CreatedAt, &e.UpdatedAt); err != nil {
-					return err
-				}
-				_ = json.Unmarshal(attrs, &e.Attributes)
-				out = append(out, e)
-			}
-			return rows.Err()
-		})
-		return out, err
-	}
-	// Cross-org reconcile path (worker): bypass tenant filter via SET LOCAL role if available.
 	rows, err := s.pool.Query(ctx, `
-SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, COALESCE(sync_authz,false), attributes, created_at, updated_at
-FROM graph_edges
-WHERE lifecycle_state='ACTIVE' AND predicate='parent' AND sync_authz=true
-ORDER BY created_at ASC LIMIT $1`, limit)
+SELECT id, organization_id, from_id, to_id, predicate, confidence, lifecycle_state, sync_authz, attributes, created_at, updated_at
+FROM list_active_parent_edges_needing_authz($1, $2)`, orgID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -870,15 +815,15 @@ ORDER BY created_at ASC LIMIT $1`, limit)
 }
 
 func (s *Store) HasAuthzTupleCoverage(ctx context.Context, orgID, operation, object, relation, subject string) (bool, error) {
-	if operation == "" {
-		operation = "write"
-	}
-	var n int
-	q := `SELECT COUNT(*) FROM authz_tuple_outbox
-WHERE organization_id=$1 AND operation=$2 AND object=$3 AND relation=$4 AND subject=$5
-  AND status IN ('pending','applied')`
-	err := s.pool.QueryRow(ctx, q, orgID, operation, object, relation, subject).Scan(&n)
-	return n > 0, err
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT has_authz_tuple_coverage($1,$2,$3,$4,$5)`, orgID, operation, object, relation, subject).Scan(&ok)
+	return ok, err
+}
+
+func (s *Store) HasAuthzTuplePending(ctx context.Context, orgID, operation, object, relation, subject string) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx, `SELECT has_authz_tuple_pending($1,$2,$3,$4,$5)`, orgID, operation, object, relation, subject).Scan(&ok)
+	return ok, err
 }
 
 // PutMappingSpec stores a MappingSpec in mapping_specs when available, else sources.attributes.

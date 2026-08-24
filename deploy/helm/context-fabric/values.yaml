@@ -127,7 +127,12 @@ dependencies:
       enabled: false
   openfga:
     connectionMode: external
-    apiUrl: http://openfga.context-fabric.svc.cluster.local:8080
+    # Prefer https + tls.enabled for external/public OpenFGA; in-cluster HTTP is opt-in.
+    apiUrl: https://openfga.context-fabric.svc.cluster.local:8080
+    scheme: https
+    tls:
+      enabled: true
+      verify: true
     existingSecret: context-fabric-openfga
     apiTokenKey: api-token
     storeIdKey: store-id
