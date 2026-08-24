@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/xsama/context-fabric/internal/conformance"
 )
 
 func main() {
@@ -32,6 +35,8 @@ func main() {
 		err = cmdDiagnose(args)
 	case "ops":
 		err = cmdOps(args)
+	case "conformance":
+		err = cmdConformance(args)
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -55,11 +60,47 @@ Usage:
   cf source register|verify --org <id> [--source <id>] [--system <name>]
   cf diagnose decision --org <id> --audit-id <id>
   cf ops lag|support-bundle --org <id>
+  cf conformance run [--suite <path>] [--filter <case-id-substr>]
 
 Environment:
   CONTEXT_FABRIC_URL   base URL (default http://127.0.0.1:8080)
   CONTEXT_FABRIC_TOKEN bearer token (e.g. local:<org>:<sub>:<role>)
+  CONTEXT_FABRIC_CONFORMANCE_SUITE  default suite.yaml path
 `)
+}
+
+func cmdConformance(args []string) error {
+	if len(args) < 1 || args[0] != "run" {
+		return fmt.Errorf("usage: cf conformance run [--suite <path>] [--filter <id>]")
+	}
+	suite := flagVal(args, "--suite")
+	filter := flagVal(args, "--filter")
+	rep, err := conformance.Run(context.Background(), conformance.RunOptions{
+		SuitePath: suite,
+		Filter:    filter,
+	})
+	if err != nil {
+		return err
+	}
+	var failed, skipped, passed int
+	for _, r := range rep.Results {
+		switch {
+		case r.Skipped:
+			skipped++
+			fmt.Printf("SKIP  %s — %s\n", r.ID, r.Detail)
+		case r.Passed:
+			passed++
+			fmt.Printf("PASS  %s\n", r.ID)
+		default:
+			failed++
+			fmt.Printf("FAIL  %s — %s\n", r.ID, r.Error)
+		}
+	}
+	fmt.Printf("\nconformance %s: %d passed, %d failed, %d skipped\n", rep.SuiteID, passed, failed, skipped)
+	if failed > 0 || !rep.Passed() {
+		return fmt.Errorf("%d case(s) failed", failed)
+	}
+	return nil
 }
 
 func baseURL() string {

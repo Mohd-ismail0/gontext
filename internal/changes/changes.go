@@ -20,6 +20,11 @@ import (
 const (
 	SchemaVersion  = "context-fabric.change/v1"
 	ProfileVersion = "context-fabric.profile/v1"
+
+	StatusPending           = "pending"
+	StatusDelivered         = "delivered"
+	StatusDuplicateIgnored  = "duplicate_ignored"
+	StatusDead              = "dead"
 )
 
 // FeedStore persists change events and webhook registrations.
@@ -41,16 +46,18 @@ type Subscription struct {
 
 // DeliveryAttempt records one webhook push try.
 type DeliveryAttempt struct {
-	DeliveryID     string    `json:"delivery_id"`
-	SubscriptionID string    `json:"subscription_id"`
-	OrgID          string    `json:"organization_id"`
-	EventID        string    `json:"event_id"`
-	Attempt        int       `json:"attempt"`
-	StatusCode     int       `json:"status_code,omitempty"`
-	Success        bool      `json:"success"`
-	Error          string    `json:"error,omitempty"`
-	PayloadSHA     string    `json:"payload_sha256"`
-	CreatedAt      time.Time `json:"created_at"`
+	DeliveryID     string     `json:"delivery_id"`
+	SubscriptionID string     `json:"subscription_id"`
+	OrgID          string     `json:"organization_id"`
+	EventID        string     `json:"event_id"`
+	Attempt        int        `json:"attempt"`
+	StatusCode     int        `json:"status_code,omitempty"`
+	Success        bool       `json:"success"`
+	Status         string     `json:"status,omitempty"` // pending|delivered|duplicate_ignored|dead
+	Error          string     `json:"error,omitempty"`
+	PayloadSHA     string     `json:"payload_sha256"`
+	NextAttempt    *time.Time `json:"next_attempt,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 // PublicEvent is the metadata-only webhook/cursor payload (ADR 0010).
@@ -69,12 +76,13 @@ type PublicEvent struct {
 
 // Service owns cursor listing, signing, delivery attempts, and replay.
 type Service struct {
-	Feed   FeedStore
-	mu     sync.RWMutex
-	subs   map[string]map[string]Subscription // org -> id -> sub
-	deliv  map[string][]DeliveryAttempt       // org -> attempts
-	secret []byte
-	Now    func() time.Time
+	Feed         FeedStore
+	mu           sync.RWMutex
+	subs         map[string]map[string]Subscription // org -> id -> sub
+	deliv        map[string][]DeliveryAttempt       // org -> attempts
+	secret       []byte
+	MaxAttempts  int // dead-letter after this many failed pushes (default 8)
+	Now          func() time.Time
 }
 
 // New creates a change-feed service. webhookSecret signs delivery bodies.
@@ -83,10 +91,11 @@ func New(feed FeedStore, webhookSecret []byte) *Service {
 		webhookSecret = []byte("context-fabric-webhook")
 	}
 	return &Service{
-		Feed:   feed,
-		subs:   make(map[string]map[string]Subscription),
-		deliv:  make(map[string][]DeliveryAttempt),
-		secret: webhookSecret,
+		Feed:        feed,
+		subs:        make(map[string]map[string]Subscription),
+		deliv:       make(map[string][]DeliveryAttempt),
+		secret:      webhookSecret,
+		MaxAttempts: 8,
 	}
 }
 
@@ -193,6 +202,10 @@ func (s *Service) SignHMAC(secret string, body []byte) string {
 // RecordDelivery stores a delivery attempt.
 func (s *Service) RecordDelivery(orgID, subscriptionID, eventID string, attempt, statusCode int, success bool, errMsg string, payload []byte) DeliveryAttempt {
 	sum := sha256.Sum256(payload)
+	status := StatusPending
+	if success {
+		status = StatusDelivered
+	}
 	d := DeliveryAttempt{
 		DeliveryID:     platform.NewEventID(),
 		SubscriptionID: subscriptionID,
@@ -201,7 +214,41 @@ func (s *Service) RecordDelivery(orgID, subscriptionID, eventID string, attempt,
 		Attempt:        attempt,
 		StatusCode:     statusCode,
 		Success:        success,
+		Status:         status,
 		Error:          errMsg,
+		PayloadSHA:     "sha256:" + hex.EncodeToString(sum[:]),
+		CreatedAt:      s.now(),
+	}
+	if !success {
+		max := s.MaxAttempts
+		if max <= 0 {
+			max = 8
+		}
+		if attempt >= max {
+			d.Status = StatusDead
+		} else {
+			backoff := time.Duration(1<<minInt(attempt, 6)) * time.Second
+			next := s.now().Add(backoff)
+			d.NextAttempt = &next
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deliv[orgID] = append(s.deliv[orgID], d)
+	return d
+}
+
+// RecordDuplicate records an idempotent duplicate delivery (already delivered).
+func (s *Service) RecordDuplicate(orgID, subscriptionID, eventID string, payload []byte) DeliveryAttempt {
+	sum := sha256.Sum256(payload)
+	d := DeliveryAttempt{
+		DeliveryID:     platform.NewEventID(),
+		SubscriptionID: subscriptionID,
+		OrgID:          orgID,
+		EventID:        eventID,
+		Attempt:        0,
+		Success:        true,
+		Status:         StatusDuplicateIgnored,
 		PayloadSHA:     "sha256:" + hex.EncodeToString(sum[:]),
 		CreatedAt:      s.now(),
 	}
@@ -209,6 +256,42 @@ func (s *Service) RecordDelivery(orgID, subscriptionID, eventID string, attempt,
 	defer s.mu.Unlock()
 	s.deliv[orgID] = append(s.deliv[orgID], d)
 	return d
+}
+
+// ListDLQ returns dead-letter delivery attempts for an org (inspectable).
+func (s *Service) ListDLQ(orgID string, limit int) []DeliveryAttempt {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	out := make([]DeliveryAttempt, 0, limit)
+	all := s.deliv[orgID]
+	for i := len(all) - 1; i >= 0 && len(out) < limit; i-- {
+		if all[i].Status == StatusDead {
+			out = append(out, all[i])
+		}
+	}
+	return out
+}
+
+// EnqueueAndAttempt records a push attempt for an event (used by conformance / ops).
+func (s *Service) EnqueueAndAttempt(ctx context.Context, subscriptionID string, ev ports.ChangeEvent) error {
+	s.mu.RLock()
+	sub, ok := s.subs[ev.OrgID][subscriptionID]
+	s.mu.RUnlock()
+	if !ok {
+		return platform.ErrNotFound("webhook subscription not found")
+	}
+	client := &http.Client{Timeout: 2 * time.Second}
+	return s.pushOne(ctx, client, 2*time.Second, sub, ev)
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // ListDeliveries returns delivery attempts for a subscription.
@@ -278,6 +361,10 @@ func (s *Service) DeliverSigned(orgID, subscriptionID string, ev ports.ChangeEve
 		return nil, "", DeliveryAttempt{}, err
 	}
 	signature = s.SignHMAC(sub.Secret, body)
+	if s.hasSuccessfulDelivery(orgID, subscriptionID, ev.EventID) {
+		delivery = s.RecordDuplicate(orgID, subscriptionID, ev.EventID, body)
+		return body, signature, delivery, nil
+	}
 	delivery = s.RecordDelivery(orgID, subscriptionID, ev.EventID, 1, 200, true, "", body)
 	return body, signature, delivery, nil
 }
@@ -372,6 +459,24 @@ func (s *Service) DeliverTestPing(ctx context.Context, client *http.Client, time
 }
 
 func (s *Service) pushOne(ctx context.Context, client *http.Client, timeout time.Duration, sub Subscription, ev ports.ChangeEvent) error {
+	if s.hasSuccessfulDelivery(sub.OrgID, sub.ID, ev.EventID) {
+		pub := ToPublic(ev)
+		body, _ := json.Marshal(pub)
+		s.RecordDuplicate(sub.OrgID, sub.ID, ev.EventID, body)
+		return nil
+	}
+	attempt := s.failedAttemptCount(sub.OrgID, sub.ID, ev.EventID) + 1
+	if next, ok := s.nextAttemptAt(sub.OrgID, sub.ID, ev.EventID); ok && next.After(s.now()) {
+		return fmt.Errorf("webhook backoff until %s", next.UTC().Format(time.RFC3339))
+	}
+	max := s.MaxAttempts
+	if max <= 0 {
+		max = 8
+	}
+	if attempt > max {
+		return fmt.Errorf("webhook dead-lettered after %d attempts", max)
+	}
+
 	pub := ToPublic(ev)
 	body, err := json.Marshal(pub)
 	if err != nil {
@@ -382,7 +487,7 @@ func (s *Service) pushOne(ctx context.Context, client *http.Client, timeout time
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, sub.TargetURL, bytes.NewReader(body))
 	if err != nil {
-		s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, 1, 0, false, err.Error(), body)
+		s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, attempt, 0, false, err.Error(), body)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -390,7 +495,7 @@ func (s *Service) pushOne(ctx context.Context, client *http.Client, timeout time
 	req.Header.Set("X-Context-Fabric-Event-Id", ev.EventID)
 	resp, err := client.Do(req)
 	if err != nil {
-		s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, 1, 0, false, err.Error(), body)
+		s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, attempt, 0, false, err.Error(), body)
 		return err
 	}
 	defer resp.Body.Close()
@@ -400,11 +505,43 @@ func (s *Service) pushOne(ctx context.Context, client *http.Client, timeout time
 	if !ok {
 		errMsg = fmt.Sprintf("status %d", resp.StatusCode)
 	}
-	s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, 1, resp.StatusCode, ok, errMsg, body)
+	s.RecordDelivery(sub.OrgID, sub.ID, ev.EventID, attempt, resp.StatusCode, ok, errMsg, body)
 	if !ok {
 		return fmt.Errorf("webhook delivery failed: %s", errMsg)
 	}
 	return nil
+}
+
+func (s *Service) failedAttemptCount(orgID, subscriptionID, eventID string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, d := range s.deliv[orgID] {
+		if d.SubscriptionID == subscriptionID && d.EventID == eventID && !d.Success && d.Status != StatusDuplicateIgnored {
+			if d.Attempt > n {
+				n = d.Attempt
+			}
+		}
+	}
+	return n
+}
+
+func (s *Service) nextAttemptAt(orgID, subscriptionID, eventID string) (time.Time, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var latest *time.Time
+	for i := range s.deliv[orgID] {
+		d := &s.deliv[orgID][i]
+		if d.SubscriptionID == subscriptionID && d.EventID == eventID && d.NextAttempt != nil {
+			if latest == nil || d.NextAttempt.After(*latest) {
+				latest = d.NextAttempt
+			}
+		}
+	}
+	if latest == nil {
+		return time.Time{}, false
+	}
+	return *latest, true
 }
 
 func (s *Service) hasSuccessfulDelivery(orgID, subscriptionID, eventID string) bool {

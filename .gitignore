@@ -36,3 +36,8 @@ Thumbs.db
 *.log
 tmp/
 .temp/
+
+# Node / TypeScript SDK
+sdk/typescript/node_modules/
+sdk/typescript/dist/
+

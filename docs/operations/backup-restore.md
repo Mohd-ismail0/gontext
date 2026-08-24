@@ -22,10 +22,11 @@ Org export manifests (`context-fabric.export/v1`) round-trip `graph_edges` and a
 ## Restore procedure
 
 1. Provision empty Postgres / bucket / OpenFGA store.
-2. Run [`scripts/restore.sh`](../../scripts/restore.sh).
+2. Run [`scripts/restore.sh`](../../scripts/restore.sh) (or `context-fabric restore <dir>`).
 3. Apply migrations if the dump is schema-light.
 4. **Replay tombstones / revocations before opening serve ready.**
-5. Run `context-fabric doctor` and a conformance search that proves deleted resources remain unretrievable.
+5. Run [`scripts/reconcile.sh`](../../scripts/reconcile.sh) (or `context-fabric reconcile`) so AuthZ outbox / `sync_authz` parents converge after OpenFGA restore.
+6. Run `context-fabric doctor` and `cf conformance run` (or a search) that proves deleted resources remain unretrievable.
 
 ## Verification
 

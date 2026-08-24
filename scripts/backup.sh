@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Context Fabric backup helper (documents the operator sequence).
-# Requires: pg_dump, optional aws/mc CLI for object storage.
+# Context Fabric backup helper — Postgres ledger, evidence objects, OpenFGA notes.
 set -euo pipefail
 
 OUT_DIR="${1:-./backup-$(date -u +%Y%m%dT%H%M%SZ)}"
-mkdir -p "$OUT_DIR"
+mkdir -p "$OUT_DIR/evidence" "$OUT_DIR/openfga"
 
 echo "==> backup bundle -> $OUT_DIR"
 
@@ -15,27 +14,40 @@ elif [[ -n "${POSTGRES_DSN:-}" ]]; then
   echo "==> PostgreSQL pg_dump (POSTGRES_DSN; prefer POSTGRES_ADMIN_DSN for full backups)"
   pg_dump --format=custom --file="$OUT_DIR/postgres.dump" "$POSTGRES_DSN"
 else
-  echo "POSTGRES_ADMIN_DSN / POSTGRES_DSN unset; skipping pg_dump (set POSTGRES_ADMIN_DSN for production)"
+  echo "POSTGRES_ADMIN_DSN / POSTGRES_DSN unset; skipping pg_dump" >&2
+  if [[ -z "${CONTEXT_FABRIC_ALLOW_STUB_OPS:-}" ]]; then
+    exit 2
+  fi
 fi
 
 if [[ -n "${S3_BUCKET:-}" ]]; then
-  echo "==> S3/MinIO sync placeholder"
-  echo "Run: aws s3 sync \"s3://${S3_BUCKET}\" \"$OUT_DIR/evidence\" --delete"
-  # aws s3 sync "s3://${S3_BUCKET}" "$OUT_DIR/evidence"
+  echo "==> evidence sync s3://${S3_BUCKET} -> $OUT_DIR/evidence"
+  if command -v aws >/dev/null 2>&1; then
+    aws s3 sync "s3://${S3_BUCKET}" "$OUT_DIR/evidence"
+  elif command -v mc >/dev/null 2>&1; then
+    mc mirror "local/${S3_BUCKET}" "$OUT_DIR/evidence"
+  else
+    echo "aws/mc not found; wrote sync instructions only"
+    echo "aws s3 sync \"s3://${S3_BUCKET}\" \"$OUT_DIR/evidence\"" >"$OUT_DIR/evidence/SYNC.txt"
+  fi
 else
   echo "S3_BUCKET unset; skipping evidence sync"
 fi
 
-echo "==> OpenFGA export placeholder"
-echo "Export store/model/tuples via OpenFGA CLI or control API into $OUT_DIR/openfga/"
-echo "NOTE: pg_dump includes graph_edges + authz_tuple_outbox; restore OpenFGA tuples after ledger, then let worker reconcile sync_authz parents."
 mkdir -p "$OUT_DIR/openfga"
 cat >"$OUT_DIR/openfga/README.md" <<'EOF'
-Place OpenFGA model + tuple export here. Example (operator-run):
+Place OpenFGA model + tuple export here. Example:
   fga store list
-  fga model get --store-id ...
-  fga tuple read --store-id ...
+  fga model get --store-id "$OPENFGA_STORE_ID"
+  fga tuple read --store-id "$OPENFGA_STORE_ID"
+After restore: import tuples, then run scripts/reconcile.sh so sync_authz parents converge.
 EOF
+
+if [[ -n "${OPENFGA_API_URL:-}" && -n "${OPENFGA_STORE_ID:-}" ]] && command -v fga >/dev/null 2>&1; then
+  echo "==> OpenFGA tuple sample export"
+  fga tuple read --store-id "$OPENFGA_STORE_ID" --max-pages 5 \
+    >"$OUT_DIR/openfga/tuples.jsonl" 2>/dev/null || true
+fi
 
 cat >"$OUT_DIR/manifest.json" <<EOF
 {

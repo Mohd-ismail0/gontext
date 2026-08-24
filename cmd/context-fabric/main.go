@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -80,7 +82,7 @@ func main() {
 		fmt.Println("context-fabric bootstrap: ok")
 		return
 	case "backup", "restore", "reconcile":
-		if err := runStubOps(role); err != nil {
+		if err := runOps(role, os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", role, err)
 			os.Exit(1)
 		}
@@ -552,12 +554,55 @@ func runBootstrap() error {
 	return bootstrapOpenFGA(ctx)
 }
 
-func runStubOps(role string) error {
-	if allowStubOps() {
-		fmt.Printf("%s: stub allowed (CONTEXT_FABRIC_ALLOW_STUB_OPS or memory/demo)\n", role)
-		return nil
+// runOps executes scripts/{backup,restore,reconcile}.sh when bash is available.
+// Falls back to an acknowledged stub only when CONTEXT_FABRIC_ALLOW_STUB_OPS is set.
+func runOps(role string, args []string) error {
+	script, err := locateOpsScript(role)
+	if err != nil {
+		if allowStubOps() {
+			fmt.Printf("%s: script missing; stub allowed (CONTEXT_FABRIC_ALLOW_STUB_OPS or memory/demo)\n", role)
+			return nil
+		}
+		return err
 	}
-	return fmt.Errorf("NOT IMPLEMENTED: use scripts/%s.sh (or scripts/backup.sh / scripts/restore.sh); set CONTEXT_FABRIC_ALLOW_STUB_OPS=1 to bypass", role)
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		if allowStubOps() {
+			fmt.Printf("%s: bash not found; stub allowed\n", role)
+			return nil
+		}
+		return fmt.Errorf("bash required to run %s (or set CONTEXT_FABRIC_ALLOW_STUB_OPS=1): %w", script, err)
+	}
+	cmdArgs := append([]string{script}, args...)
+	cmd := exec.Command(bash, cmdArgs...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w", script, err)
+	}
+	return nil
+}
+
+func locateOpsScript(role string) (string, error) {
+	name := "scripts/" + role + ".sh"
+	candidates := []string{name}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(filepath.Dir(exe), "..", name),
+			filepath.Join(filepath.Dir(exe), name),
+		)
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(wd, name))
+	}
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			abs, _ := filepath.Abs(c)
+			return abs, nil
+		}
+	}
+	return "", fmt.Errorf("NOT IMPLEMENTED: missing %s; set CONTEXT_FABRIC_ALLOW_STUB_OPS=1 to bypass", name)
 }
 
 func runDoctor() error {

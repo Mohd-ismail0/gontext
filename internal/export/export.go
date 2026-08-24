@@ -6,7 +6,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/xsama/context-fabric/internal/authzsync"
@@ -18,8 +20,9 @@ const FormatVersion = "context-fabric.export/v1"
 
 // Service builds and imports org-scoped export manifests (no secrets).
 type Service struct {
-	Ledger ports.LedgerStore
-	Now    func() time.Time
+	Ledger   ports.LedgerStore
+	Evidence ports.EvidenceStore // optional; when set, evidence refs are packed
+	Now      func() time.Time
 }
 
 // ContentEntry describes one hashed payload section.
@@ -49,6 +52,16 @@ type Manifest struct {
 	Tombstones  []Tombstone                `json:"tombstones,omitempty"`
 	GraphEdges  []ports.GraphEdge          `json:"graph_edges,omitempty"`
 	AuthzTuples []AuthzTupleManifest       `json:"authz_tuples,omitempty"`
+	EvidenceRefs []EvidenceRef             `json:"evidence_refs,omitempty"`
+}
+
+// EvidenceRef is a portable pointer to an evidence object (no secret material).
+type EvidenceRef struct {
+	Key         string `json:"key"`
+	ResourceID  string `json:"resource_id,omitempty"`
+	RevisionID  string `json:"revision_id,omitempty"`
+	ContentHash string `json:"content_hash,omitempty"`
+	ByteSize    int64  `json:"byte_size,omitempty"`
 }
 
 // AuthzTupleManifest is a portable AuthZ relationship required by sync_authz parent edges.
@@ -151,12 +164,33 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		return authzTuples[i].Subject < authzTuples[j].Subject
 	})
 
+	evidenceRefs := collectEvidenceRefs(revisions)
+	if s.Evidence != nil {
+		for i := range evidenceRefs {
+			key, ver := splitEvidenceRef(evidenceRefs[i].Key)
+			rc, meta, err := s.Evidence.Get(ctx, key, ver)
+			if err == nil {
+				n, _ := io.Copy(io.Discard, io.LimitReader(rc, 64<<20))
+				_ = rc.Close()
+				evidenceRefs[i].ByteSize = n
+				if meta.Key != "" {
+					evidenceRefs[i].Key = meta.Key
+					if meta.VersionID != "" {
+						evidenceRefs[i].Key = meta.Key + "@" + meta.VersionID
+					}
+				}
+			}
+		}
+	}
+	sort.Slice(evidenceRefs, func(i, j int) bool { return evidenceRefs[i].Key < evidenceRefs[j].Key })
+
 	recordsJSON := mustCanonicalJSON(records)
 	revsJSON := mustCanonicalJSON(revisions)
 	sourcesJSON := mustCanonicalJSON(sources)
 	tombsJSON := mustCanonicalJSON(tombstones)
 	edgesJSON := mustCanonicalJSON(edges)
 	authzJSON := mustCanonicalJSON(authzTuples)
+	evidenceJSON := mustCanonicalJSON(evidenceRefs)
 
 	contents := []ContentEntry{
 		entry("records.json", "records", recordsJSON, len(records)),
@@ -165,6 +199,7 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		entry("tombstones.json", "tombstones", tombsJSON, len(tombstones)),
 		entry("graph_edges.json", "graph_edges", edgesJSON, len(edges)),
 		entry("authz_tuples.json", "authz_tuples", authzJSON, len(authzTuples)),
+		entry("evidence_refs.json", "evidence_refs", evidenceJSON, len(evidenceRefs)),
 	}
 
 	m := Manifest{
@@ -181,13 +216,15 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 			"packet":      "context-fabric.packet/v1",
 			"graph_edge":  "context-fabric.graph-edge/v1",
 			"authz_tuple": "context-fabric.authz-tuple/v1",
+			"evidence":    "context-fabric.evidence-ref/v1",
 		},
-		Records:     records,
-		Revisions:   revisions,
-		Sources:     sources,
-		Tombstones:  tombstones,
-		GraphEdges:  edges,
-		AuthzTuples: authzTuples,
+		Records:      records,
+		Revisions:    revisions,
+		Sources:      sources,
+		Tombstones:   tombstones,
+		GraphEdges:   edges,
+		AuthzTuples:  authzTuples,
+		EvidenceRefs: evidenceRefs,
 	}
 	m.Checksums = map[string]string{
 		"manifest_sha256": HashManifest(m),
@@ -237,6 +274,7 @@ func (s *Service) ImportInto(ctx context.Context, targetOrgID string, m Manifest
 			}
 		}
 		// Import edges after records so endpoint FKs / placeholders exist.
+		seenAuthz := map[string]bool{}
 		for _, e := range m.GraphEdges {
 			e.OrgID = targetOrgID
 			if err := s.Ledger.UpsertEdge(ctx, tx, e); err != nil {
@@ -247,6 +285,49 @@ func (s *Service) ImportInto(ctx context.Context, targetOrgID string, m Manifest
 				if err := authzsync.EnqueueForEdge(ctx, s.Ledger, tx, e, authzsync.OperationWrite, now); err != nil {
 					return err
 				}
+				if authzsync.NeedsSynchronization(e) {
+					seenAuthz["resource:"+e.FromID+"|parent|resource:"+e.ToID] = true
+				}
+			}
+		}
+		// Replay tombstones after records so deleted visibility dominates.
+		for _, t := range m.Tombstones {
+			rec, err := s.Ledger.GetRecordTx(ctx, tx, targetOrgID, t.ResourceID)
+			if err != nil {
+				rec = ports.Record{
+					ResourceID: t.ResourceID, OrgID: targetOrgID, Kind: "resource",
+					Title: t.ResourceID, Classification: "internal",
+				}
+			}
+			rec.State = t.State
+			if rec.State == "" {
+				rec.State = "TOMBSTONED"
+			}
+			if t.RevisionID != "" {
+				rec.CurrentRevID = t.RevisionID
+			}
+			rec.UpdatedAt = t.At
+			if err := s.Ledger.UpsertRecord(ctx, tx, rec); err != nil {
+				return err
+			}
+		}
+		// Standalone AuthZ tuple manifests not already covered by sync_authz edges.
+		now := s.now()
+		for _, tup := range m.AuthzTuples {
+			key := tup.Object + "|" + tup.Relation + "|" + tup.Subject
+			if seenAuthz[key] {
+				continue
+			}
+			op := tup.Operation
+			if op == "" {
+				op = "write"
+			}
+			if err := s.Ledger.EnqueueAuthzTuple(ctx, tx, ports.AuthzTupleOp{
+				ID: platform.NewEventID(), OrgID: targetOrgID, Operation: op,
+				Object: tup.Object, Relation: tup.Relation, Subject: tup.Subject,
+				EdgeID: tup.EdgeID, Status: "pending", CreatedAt: now, UpdatedAt: now, NextAttempt: now,
+			}); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -266,6 +347,7 @@ func HashManifest(m Manifest) string {
 		Tombstones     []Tombstone                `json:"tombstones"`
 		GraphEdges     []ports.GraphEdge          `json:"graph_edges"`
 		AuthzTuples    []AuthzTupleManifest       `json:"authz_tuples"`
+		EvidenceRefs   []EvidenceRef              `json:"evidence_refs"`
 	}{
 		FormatVersion:  m.FormatVersion,
 		OrganizationID: m.OrganizationID,
@@ -276,6 +358,7 @@ func HashManifest(m Manifest) string {
 		Tombstones:     m.Tombstones,
 		GraphEdges:     m.GraphEdges,
 		AuthzTuples:    m.AuthzTuples,
+		EvidenceRefs:   m.EvidenceRefs,
 	}
 	raw := mustCanonicalJSON(payload)
 	sum := sha256.Sum256(raw)
@@ -327,6 +410,35 @@ func isTomb(state string) bool {
 	default:
 		return false
 	}
+}
+
+func collectEvidenceRefs(revs []ports.Revision) []EvidenceRef {
+	seen := map[string]bool{}
+	out := make([]EvidenceRef, 0)
+	for _, r := range revs {
+		ref := strings.TrimSpace(r.EvidenceRef)
+		if ref == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, EvidenceRef{
+			Key:         ref,
+			ResourceID:  r.ResourceID,
+			RevisionID:  r.RevisionID,
+			ContentHash: r.ContentHash,
+		})
+	}
+	return out
+}
+
+func splitEvidenceRef(ref string) (key, version string) {
+	if i := strings.IndexByte(ref, '@'); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	if i := strings.IndexByte(ref, '#'); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	return ref, ""
 }
 
 func (s *Service) now() time.Time {

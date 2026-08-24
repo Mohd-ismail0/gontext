@@ -2,6 +2,7 @@ package export_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/xsama/context-fabric/internal/adapters/memory"
@@ -12,6 +13,7 @@ import (
 func TestExportRoundTripHashStable(t *testing.T) {
 	ctx := context.Background()
 	store := memory.NewStore()
+	ev := memory.NewEvidence()
 	org := "org_exp_1"
 	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Exp"})
 	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
@@ -21,6 +23,11 @@ func TestExportRoundTripHashStable(t *testing.T) {
 		})
 		_ = store.AppendRevision(ctx, tx, ports.Revision{
 			RevisionID: "rev1", ResourceID: "r1", OrgID: org, State: "INDEXED", ContentHash: "abc",
+			EvidenceRef: "org_exp_1/evidence/abc",
+		})
+		_ = store.UpsertRecord(ctx, tx, ports.Record{
+			ResourceID: "r_del", OrgID: org, Kind: "document", Title: "gone",
+			Classification: "internal", CurrentRevID: "rev_del", State: "TOMBSTONED",
 		})
 		_ = store.UpsertEdge(ctx, tx, ports.GraphEdge{
 			EdgeID: "e1", OrgID: org, FromID: "r1", ToID: "r1-parent", Predicate: ports.EdgeParent,
@@ -31,8 +38,9 @@ func TestExportRoundTripHashStable(t *testing.T) {
 			Attributes: map[string]string{"api_key": "SHOULD_NOT_EXPORT", "region": "us"},
 		})
 	})
+	_, _ = ev.Put(ctx, "org_exp_1/evidence/abc", strings.NewReader("payload"), "text/plain", nil)
 
-	svc := &export.Service{Ledger: store}
+	svc := &export.Service{Ledger: store, Evidence: ev}
 	m1, err := svc.Build(ctx, org, "alice")
 	if err != nil {
 		t.Fatal(err)
@@ -64,6 +72,12 @@ func TestExportRoundTripHashStable(t *testing.T) {
 	}
 	if len(m1.AuthzTuples) != 1 || m1.AuthzTuples[0].Relation != "parent" {
 		t.Fatalf("expected authz tuple manifest: %#v", m1.AuthzTuples)
+	}
+	if len(m1.EvidenceRefs) == 0 {
+		t.Fatal("expected evidence refs in export")
+	}
+	if len(m1.Tombstones) == 0 {
+		t.Fatal("expected tombstones in export")
 	}
 
 	target := "org_isolated_2"

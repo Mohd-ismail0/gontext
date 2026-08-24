@@ -1,14 +1,24 @@
 {
   "name": "@xsama/context-fabric",
-  "version": "0.0.1",
-  "description": "Minimal TypeScript client stub for Context Fabric OpenAPI",
+  "version": "0.1.0",
+  "description": "TypeScript client for Context Fabric OpenAPI (search, get, brief, graph, intake)",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "README.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "src"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "generate": "echo \"Generate from contracts/openapi/openapi.yaml (openapi-typescript or equivalent)\""
+    "generate": "node ./scripts/generate.mjs"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.6.0"
   },
   "engines": {
     "node": ">=18"
