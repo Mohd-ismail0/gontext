@@ -16,9 +16,9 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Test
-        run: |
-          mkdir -p tmp
-          go test -count=1 -o tmp/ ./...
+        # Do not use `go test -o <dir> ./...`: packages that share a basename
+        # (e.g. eval/retrieval and internal/retrieval) both want retrieval.test.
+        run: go test -count=1 ./...
       - name: Build binaries
         run: |
           go build -o bin/context-fabric ./cmd/context-fabric
