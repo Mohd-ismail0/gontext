@@ -241,7 +241,7 @@ func (s *Store) ClaimOutbox(ctx context.Context, limit int) ([]ports.OutboxEntry
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := s.pool.Query(ctx, `SELECT id, organization_id, subject, payload, headers, created_at, published_at FROM claim_outbox_batch($1)`, limit)
+	rows, err := s.pool.Query(ctx, `SELECT id, organization_id, subject, payload, headers, created_at, published_at FROM claim_outbox_batch($1, interval '30 seconds')`, limit)
 	if err != nil {
 		return nil, err
 	}

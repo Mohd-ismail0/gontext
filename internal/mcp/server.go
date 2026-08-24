@@ -428,6 +428,9 @@ func bearerCreds(r *http.Request) ports.Credentials {
 		token = strings.TrimSpace(token[7:])
 	}
 	creds := ports.Credentials{BearerToken: token}
+	if k := strings.TrimSpace(r.Header.Get("X-API-Key")); k != "" {
+		creds.APIKey = k
+	}
 	if os.Getenv("CONTEXT_FABRIC_ALLOW_SCOPE_HEADER") == "1" {
 		scopes := strings.Fields(r.Header.Get("X-Context-Scopes"))
 		if len(scopes) > 0 {

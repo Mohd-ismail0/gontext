@@ -67,7 +67,7 @@ type PolicyProvider interface {
 type CredentialProvider interface {
 	ResolveAPIKey(ctx context.Context, key string) (AgentPrincipal, error)
 	CreateAgentCredential(ctx context.Context, req CreateAgentCredentialRequest) (AgentCredential, error)
-	Revoke(ctx context.Context, credentialID string) error
+	Revoke(ctx context.Context, orgID, credentialID string) error
 }
 
 // EventBus publishes and subscribes to durable domain events.

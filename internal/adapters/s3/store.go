@@ -96,20 +96,10 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, contentType
 	if max <= 0 {
 		max = defaultMaxBytes
 	}
-	// Read at most max+1 bytes so we can detect overflow without loading unbounded input.
-	limited := io.LimitReader(body, max+1)
-	hasher := sha256.New()
-	var buf bytes.Buffer
-	n, err := io.Copy(&buf, io.TeeReader(limited, hasher))
+	data, hash, err := copyCapped(body, max)
 	if err != nil {
 		return ports.EvidenceObject{}, err
 	}
-	if n > max {
-		return ports.EvidenceObject{}, platform.ErrValidation(
-			fmt.Sprintf("evidence object exceeds max size of %d bytes", max),
-		)
-	}
-	hash := "sha256:" + hex.EncodeToString(hasher.Sum(nil))
 	md := map[string]string{}
 	for k, v := range meta {
 		md[k] = v
@@ -118,7 +108,7 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, contentType
 	out, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(key),
-		Body:        bytes.NewReader(buf.Bytes()),
+		Body:        bytes.NewReader(data),
 		ContentType: aws.String(contentType),
 		Metadata:    md,
 	})
@@ -131,8 +121,29 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, contentType
 	}
 	return ports.EvidenceObject{
 		Key: key, VersionID: ver, ContentHash: hash,
-		Size: n, ContentType: contentType, Metadata: md,
+		Size: int64(len(data)), ContentType: contentType, Metadata: md,
 	}, nil
+}
+
+// copyCapped streams r up to max+1 bytes, hashing as it goes. Oversized input
+// returns a validation error without buffering the remainder.
+func copyCapped(r io.Reader, max int64) ([]byte, string, error) {
+	if max <= 0 {
+		max = defaultMaxBytes
+	}
+	limited := io.LimitReader(r, max+1)
+	hasher := sha256.New()
+	var buf bytes.Buffer
+	n, err := io.Copy(&buf, io.TeeReader(limited, hasher))
+	if err != nil {
+		return nil, "", err
+	}
+	if n > max {
+		return nil, "", platform.ErrValidation(
+			fmt.Sprintf("evidence object exceeds max size of %d bytes", max),
+		)
+	}
+	return buf.Bytes(), "sha256:" + hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
 func (s *Store) Get(ctx context.Context, key, versionID string) (io.ReadCloser, ports.EvidenceObject, error) {

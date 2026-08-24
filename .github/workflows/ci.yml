@@ -36,5 +36,9 @@ jobs:
           test -s contracts/jsonschema/event-envelope.json
       - name: Compile retrieval eval scorer
         run: go build -o bin/retrieval-score ./eval/retrieval
+      - name: Migration embed parity
+        run: diff -qr migrations internal/migrate/migrations
+      - name: Validate migration 008 present
+        run: test -s migrations/008_outbox_claim_and_org_revoke.sql
       - name: Docker build
         run: docker build -t context-fabric:ci .
