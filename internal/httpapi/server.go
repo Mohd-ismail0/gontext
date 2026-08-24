@@ -50,14 +50,13 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context:search", s.auth(s.handleSearch))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/resources/{resourceId}", s.auth(s.handleGet))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context:graph", s.auth(s.handleGraph))
-	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/resources/{resourceId}:delete", s.auth(s.handleDelete))
+	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/resources/{resourceSpec}", s.auth(s.handleDelete))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context:brief", s.auth(s.handleBrief))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/access-requests", s.auth(s.handleAccess))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/sources", s.auth(s.handleRegisterSource))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/sources", s.auth(s.handleListSources))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/sources/{sourceId}", s.auth(s.handleGetSource))
-	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/sources/{sourceId}:verify", s.auth(s.handleVerifySource))
-	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/sources/{sourceId}:rotate", s.auth(s.handleRotateSource))
+	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/sources/{sourceSpec}", s.auth(s.handleSourceRPC))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/intake", s.auth(s.handleIntake))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/intake:batch", s.auth(s.handleIntakeBatch))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/evidence:presign", s.auth(s.handlePresign))
@@ -67,7 +66,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/webhooks", s.auth(s.handleWebhooks))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/webhooks/{subscriptionId}", s.auth(s.handleGetWebhook))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/webhooks/{subscriptionId}/deliveries", s.auth(s.handleListDeliveries))
-	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/webhooks/{subscriptionId}/deliveries/{deliveryId}:replay", s.auth(s.handleWebhookReplay))
+	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/webhooks/{subscriptionId}/deliveries/{deliverySpec}", s.auth(s.handleWebhookReplay))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/exports", s.auth(s.handleExport))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/exports/{exportId}", s.auth(s.handleGetExport))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/imports", s.auth(s.handleImport))
@@ -76,8 +75,7 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/context/diagnose", s.auth(s.handleDiagnose))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/context/diagnose/decision/{auditId}", s.auth(s.handleDiagnoseAudit))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/agents", s.auth(s.handleCreateAgent))
-	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/agents/{agentId}/credentials:rotate", s.auth(s.handleRotateAgent))
-	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/agents/credentials/{credentialId}:revoke", s.auth(s.handleRevokeAgent))
+	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/agents/{agentTail...}", s.auth(s.handleAgentRPC))
 	s.Mux.HandleFunc("GET /v1/organizations/{orgId}/ops/lag", s.auth(s.handleOpsLag))
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/ops/support-bundle", s.auth(s.handleSupportBundle))
 }
@@ -162,6 +160,9 @@ func bearerCreds(r *http.Request) ports.Credentials {
 		token = strings.TrimSpace(token[7:])
 	}
 	creds := ports.Credentials{BearerToken: token}
+	if k := strings.TrimSpace(r.Header.Get("X-API-Key")); k != "" {
+		creds.APIKey = k
+	}
 	// X-Context-Scopes is ignored for authorization unless explicitly enabled.
 	if os.Getenv("CONTEXT_FABRIC_ALLOW_SCOPE_HEADER") == "1" {
 		scopes := strings.Fields(r.Header.Get("X-Context-Scopes"))
@@ -242,7 +243,11 @@ func (s *Server) handleGraph(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
-	resourceID := r.PathValue("resourceId")
+	resourceID, ok := cutRPC(r.PathValue("resourceSpec"), "delete")
+	if !ok {
+		writeErr(w, platform.ErrNotFound("not found"))
+		return
+	}
 	creds := bearerCreds(r)
 	var body struct {
 		Reason string `json:"reason"`
@@ -324,6 +329,21 @@ func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Server) handleSourceRPC(w http.ResponseWriter, r *http.Request) {
+	spec := r.PathValue("sourceSpec")
+	if id, ok := cutRPC(spec, "verify"); ok {
+		r.SetPathValue("sourceId", id)
+		s.handleVerifySource(w, r)
+		return
+	}
+	if id, ok := cutRPC(spec, "rotate"); ok {
+		r.SetPathValue("sourceId", id)
+		s.handleRotateSource(w, r)
+		return
+	}
+	writeErr(w, platform.ErrNotFound("not found"))
 }
 
 func (s *Server) handleVerifySource(w http.ResponseWriter, r *http.Request) {
@@ -592,7 +612,11 @@ func (s *Server) handleListDeliveries(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleWebhookReplay(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	subID := r.PathValue("subscriptionId")
-	deliveryID := r.PathValue("deliveryId")
+	deliveryID, ok := cutRPC(r.PathValue("deliverySpec"), "replay")
+	if !ok {
+		writeErr(w, platform.ErrNotFound("not found"))
+		return
+	}
 	creds := bearerCreds(r)
 	var body map[string]any
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -754,6 +778,25 @@ func (s *Server) handleCreateAgent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, out)
 }
 
+func (s *Server) handleAgentRPC(w http.ResponseWriter, r *http.Request) {
+	tail := strings.Trim(r.PathValue("agentTail"), "/")
+	parts := strings.Split(tail, "/")
+	if len(parts) == 2 && parts[1] == "credentials:rotate" {
+		r.SetPathValue("agentId", parts[0])
+		s.handleRotateAgent(w, r)
+		return
+	}
+	if len(parts) == 2 && parts[0] == "credentials" {
+		if id, ok := cutRPC(parts[1], "revoke"); ok {
+			r.SetPathValue("credentialSpec", parts[1])
+			r.SetPathValue("credentialId", id)
+			s.handleRevokeAgent(w, r)
+			return
+		}
+	}
+	writeErr(w, platform.ErrNotFound("not found"))
+}
+
 func (s *Server) handleRotateAgent(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	agentID := r.PathValue("agentId")
@@ -768,7 +811,14 @@ func (s *Server) handleRotateAgent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRevokeAgent(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
-	credID := r.PathValue("credentialId")
+	credID, ok := cutRPC(r.PathValue("credentialSpec"), "revoke")
+	if !ok {
+		credID = r.PathValue("credentialId")
+	}
+	if credID == "" {
+		writeErr(w, platform.ErrNotFound("not found"))
+		return
+	}
 	creds := bearerCreds(r)
 	out, err := s.App.RevokeAgent(r.Context(), creds, orgID, credID)
 	if err != nil {
@@ -804,6 +854,20 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// cutRPC splits a ServeMux wildcard segment of the form "{id}:{action}".
+// Go 1.22+ rejects patterns like `{id}:delete` (wildcard must be the whole segment).
+func cutRPC(spec, action string) (string, bool) {
+	suffix := ":" + action
+	if spec == "" || !strings.HasSuffix(spec, suffix) {
+		return "", false
+	}
+	id := strings.TrimSuffix(spec, suffix)
+	if id == "" {
+		return "", false
+	}
+	return id, true
 }
 
 func writeUnauthorized(w http.ResponseWriter, r *http.Request, s *Server) {

@@ -32,7 +32,9 @@ CREATE INDEX IF NOT EXISTS idx_outbox_claim
   ON outbox (created_at)
   WHERE published_at IS NULL;
 
-CREATE OR REPLACE FUNCTION claim_outbox_batch(p_limit int, p_lease interval DEFAULT interval '30 seconds')
+-- Two-arg form has NO default. A default plus a 1-arg wrapper makes
+-- claim_outbox_batch($1) ambiguous in PostgreSQL.
+CREATE OR REPLACE FUNCTION claim_outbox_batch(p_limit int, p_lease interval)
 RETURNS TABLE (
   id text,
   organization_id text,
@@ -85,16 +87,6 @@ BEGIN
 END;
 $$;
 
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'context_gateway') THEN
-    GRANT EXECUTE ON FUNCTION claim_outbox_batch(int, interval) TO context_gateway;
-    -- Keep single-arg overload usable for older callers by replacing 005 signature.
-    GRANT EXECUTE ON FUNCTION claim_outbox_batch(int) TO context_gateway;
-  END IF;
-END
-$$;
-
 -- Compatibility wrapper: claim_outbox_batch(int) -> default lease.
 CREATE OR REPLACE FUNCTION claim_outbox_batch(p_limit int)
 RETURNS TABLE (
@@ -111,4 +103,13 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
   SELECT * FROM claim_outbox_batch(p_limit, interval '30 seconds');
+$$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'context_gateway') THEN
+    GRANT EXECUTE ON FUNCTION claim_outbox_batch(int, interval) TO context_gateway;
+    GRANT EXECUTE ON FUNCTION claim_outbox_batch(int) TO context_gateway;
+  END IF;
+END
 $$;

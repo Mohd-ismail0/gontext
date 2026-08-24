@@ -18,7 +18,7 @@ import (
 	"github.com/xsama/context-fabric/internal/retrieval"
 )
 
-func TestToolsListReturnsFourTools(t *testing.T) {
+func TestToolsListReturnsFiveTools(t *testing.T) {
 	store := memory.NewStore()
 	idx := memory.NewIndex()
 	authz := openfga.NewMemory()
@@ -60,7 +60,7 @@ func TestToolsListReturnsFourTools(t *testing.T) {
 	for _, tool := range resp.Result.Tools {
 		names[tool["name"].(string)] = true
 	}
-	for _, want := range []string{"context.search", "context.get", "context.brief", "context.request_access"} {
+	for _, want := range []string{"context.search", "context.get", "context.brief", "context.graph", "context.request_access"} {
 		if !names[want] {
 			t.Fatalf("missing tool %s", want)
 		}

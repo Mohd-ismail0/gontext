@@ -81,19 +81,23 @@ func Handler() http.Handler {
 		seen := map[string]bool{}
 		for _, name := range order {
 			seen[name] = true
-			writeMetric(w, name, Get(name))
+			kind := "counter"
+			if name == OutboxPending {
+				kind = "gauge"
+			}
+			writeMetric(w, name, kind, Get(name))
 		}
 		for _, name := range names {
 			if seen[name] {
 				continue
 			}
-			writeMetric(w, name, Get(name))
+			writeMetric(w, name, "counter", Get(name))
 		}
 	})
 }
 
-func writeMetric(w http.ResponseWriter, name string, v int64) {
+func writeMetric(w http.ResponseWriter, name, kind string, v int64) {
 	_, _ = fmt.Fprintf(w, "# HELP context_fabric_%s Context Fabric metric %s\n", name, name)
-	_, _ = fmt.Fprintf(w, "# TYPE context_fabric_%s counter\n", name)
+	_, _ = fmt.Fprintf(w, "# TYPE context_fabric_%s %s\n", name, kind)
 	_, _ = fmt.Fprintf(w, "context_fabric_%s %d\n", name, v)
 }

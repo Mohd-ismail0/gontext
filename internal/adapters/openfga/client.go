@@ -106,7 +106,11 @@ func (c *Client) BatchCheck(ctx context.Context, reqs []ports.AuthzCheck) ([]por
 
 func (c *Client) batchCheckNative(ctx context.Context, reqs []ports.AuthzCheck) ([]ports.AuthzDecision, error) {
 	checks := make([]map[string]any, 0, len(reqs))
+	mode := ports.ConsistencyMinLatency
 	for i, r := range reqs {
+		if r.Consistency == ports.ConsistencyFullyConsistent {
+			mode = ports.ConsistencyFullyConsistent
+		}
 		checks = append(checks, map[string]any{
 			"correlation_id": fmt.Sprintf("%d", i),
 			"tuple_key": map[string]string{
@@ -114,12 +118,12 @@ func (c *Client) batchCheckNative(ctx context.Context, reqs []ports.AuthzCheck) 
 				"relation": mapRelation(r.Action),
 				"object":   formatObject(r.ResourceID),
 			},
-			"consistency": ConsistencyPreference(r.Consistency),
 		})
 	}
 	payload := map[string]any{
 		"authorization_model_id": c.ModelID,
 		"checks":                 checks,
+		"consistency":            ConsistencyPreference(mode),
 	}
 	var resp struct {
 		Result map[string]struct {

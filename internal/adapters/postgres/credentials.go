@@ -48,6 +48,7 @@ FROM resolve_agent_credential($1)`, h).
 		Principal: ports.Principal{
 			ID: "agent|" + agentID, Kind: ports.PrincipalKindAgent,
 			OrgID: orgID, Subject: agentID, Issuer: "context-fabric/apikey",
+			Scopes: []string{"context:search", "context:read"},
 		},
 		AgentID: agentID, CredentialID: credID, OwnerID: ownerID,
 	}, nil
@@ -81,9 +82,12 @@ VALUES ($1,$2,$3,$4,$5,$6,false,$7)`,
 	}, nil
 }
 
-func (c *CredentialStore) Revoke(ctx context.Context, credentialID string) error {
+func (c *CredentialStore) Revoke(ctx context.Context, orgID, credentialID string) error {
+	if orgID == "" || credentialID == "" {
+		return platform.ErrValidation("org and credential required")
+	}
 	var ok bool
-	err := c.pool.QueryRow(ctx, `SELECT revoke_agent_credential($1)`, credentialID).Scan(&ok)
+	err := c.pool.QueryRow(ctx, `SELECT revoke_agent_credential($1, $2)`, orgID, credentialID).Scan(&ok)
 	if err != nil {
 		return platform.ErrNotFound("credential not found")
 	}

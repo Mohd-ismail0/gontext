@@ -1071,7 +1071,7 @@ func (s *ApplicationService) RevokeAgent(ctx context.Context, creds ports.Creden
 	if s.Credentials == nil {
 		return nil, platform.ErrUnavailable("credential provider not configured")
 	}
-	if err := s.Credentials.Revoke(ctx, credentialID); err != nil {
+	if err := s.Credentials.Revoke(ctx, orgID, credentialID); err != nil {
 		return nil, err
 	}
 	return map[string]any{"organization_id": orgID, "credential_id": credentialID, "status": "revoked"}, nil
