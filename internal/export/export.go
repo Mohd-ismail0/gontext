@@ -20,9 +20,11 @@ const FormatVersion = "context-fabric.export/v1"
 
 // Service builds and imports org-scoped export manifests (no secrets).
 type Service struct {
-	Ledger   ports.LedgerStore
-	Evidence ports.EvidenceStore // optional; when set, evidence refs are packed
-	Now      func() time.Time
+	Ledger    ports.LedgerStore
+	Evidence  ports.EvidenceStore // optional; when set, evidence refs are packed
+	Now       func() time.Time
+	RecordCap int // test override; default 10000
+	EdgeCap   int // test override; default 50000
 }
 
 // ContentEntry describes one hashed payload section.
@@ -99,14 +101,20 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 	now := s.now()
 	exportID := platform.NewEventID()
 
-	const recordHardCap = 10_000
-	const edgeHardCap = 50_000
+	recordHardCap := s.RecordCap
+	if recordHardCap <= 0 {
+		recordHardCap = 10_000
+	}
+	edgeHardCap := s.EdgeCap
+	if edgeHardCap <= 0 {
+		edgeHardCap = 50_000
+	}
 
-	records, _, err := s.Ledger.ListRecords(ctx, orgID, recordHardCap, "")
+	records, _, err := s.Ledger.ListRecords(ctx, orgID, recordHardCap+1, "")
 	if err != nil {
 		return Manifest{}, err
 	}
-	if len(records) >= recordHardCap {
+	if len(records) > recordHardCap {
 		return Manifest{}, platform.ErrValidation(
 			"export exceeds hard cap of 10000 records; use a bounded export job",
 		)
@@ -146,11 +154,11 @@ func (s *Service) Build(ctx context.Context, orgID, createdBy string) (Manifest,
 		records[i].Attributes = scrubSecrets(records[i].Attributes)
 	}
 
-	edges, err := s.Ledger.ListEdges(ctx, orgID, ports.EdgeListOptions{IncludeDead: true, Limit: edgeHardCap})
+	edges, err := s.Ledger.ListEdges(ctx, orgID, ports.EdgeListOptions{IncludeDead: true, Limit: edgeHardCap + 1})
 	if err != nil {
 		return Manifest{}, err
 	}
-	if len(edges) >= edgeHardCap {
+	if len(edges) > edgeHardCap {
 		return Manifest{}, platform.ErrValidation(
 			"export exceeds hard cap of 50000 edges; use a bounded export job",
 		)

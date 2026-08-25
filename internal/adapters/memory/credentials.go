@@ -79,6 +79,7 @@ func (c *CredentialStore) CreateAgentCredential(_ context.Context, req ports.Cre
 		Principal: ports.Principal{
 			ID: "agent|" + req.AgentID, Kind: ports.PrincipalKindAgent,
 			OrgID: req.OrgID, Subject: req.AgentID, Issuer: "context-fabric/apikey",
+			Scopes: []string{"context:search", "context:read"},
 		},
 		AgentID: req.AgentID, CredentialID: id, OwnerID: req.OwnerID,
 	}
@@ -94,11 +95,14 @@ func (c *CredentialStore) CreateAgentCredential(_ context.Context, req ports.Cre
 	return meta, nil
 }
 
-func (c *CredentialStore) Revoke(_ context.Context, credentialID string) error {
+func (c *CredentialStore) Revoke(_ context.Context, orgID, credentialID string) error {
+	if orgID == "" || credentialID == "" {
+		return platform.ErrValidation("org and credential required")
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	cred, ok := c.byID[credentialID]
-	if !ok {
+	if !ok || cred.orgID != orgID {
 		return platform.ErrNotFound("credential not found")
 	}
 	cred.revoked = true
@@ -113,7 +117,7 @@ func (c *CredentialStore) RotateAgentCredential(ctx context.Context, req ports.C
 	ids := append([]string{}, c.byAgent[req.OrgID+"|"+req.AgentID]...)
 	c.mu.Unlock()
 	for _, id := range ids {
-		_ = c.Revoke(ctx, id)
+		_ = c.Revoke(ctx, req.OrgID, id)
 	}
 	return c.CreateAgentCredential(ctx, req)
 }

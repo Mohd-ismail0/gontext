@@ -25,7 +25,7 @@ if [[ -z "${POSTGRES_DSN:-}" && -z "${POSTGRES_ADMIN_DSN:-}" ]]; then
   exit 2
 fi
 
-echo "==> ensuring migrations (006+ FTS/outbox lease, 007+ credentials/webhooks)"
+echo "==> ensuring migrations (008+ outbox claim disambiguation, org-scoped revoke)"
 ./bin/context-fabric migrate
 
 echo "==> short-lived worker drain (AuthZ outbox + index projection)"

@@ -117,3 +117,18 @@ func TestExportRoundTripHashStable(t *testing.T) {
 		t.Fatalf("import should enqueue AuthZ tuple, pending=%d", pending)
 	}
 }
+
+func TestExportHardCapReturnsError(t *testing.T) {
+	ctx := context.Background()
+	store := memory.NewStore()
+	org := "org_cap"
+	_ = store.CreateOrganization(ctx, ports.Organization{ID: org, Name: "Cap"})
+	_ = store.WithOrgTx(ctx, org, func(ctx context.Context, tx ports.Tx) error {
+		_ = store.UpsertRecord(ctx, tx, ports.Record{ResourceID: "r1", OrgID: org, Kind: "document", State: "INDEXED"})
+		return store.UpsertRecord(ctx, tx, ports.Record{ResourceID: "r2", OrgID: org, Kind: "document", State: "INDEXED"})
+	})
+	svc := &export.Service{Ledger: store, RecordCap: 1}
+	if _, err := svc.Build(ctx, org, "alice"); err == nil {
+		t.Fatal("expected bounded-job error")
+	}
+}

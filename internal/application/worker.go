@@ -9,6 +9,7 @@ import (
 
 	"github.com/xsama/context-fabric/internal/authzsync"
 	"github.com/xsama/context-fabric/internal/changes"
+	"github.com/xsama/context-fabric/internal/observability"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -98,6 +99,9 @@ func (w *Worker) relayLoop(ctx context.Context) {
 }
 
 func (w *Worker) relayOnce(ctx context.Context) error {
+	if pending, err := w.Ledger.ListOutboxPending(ctx, "", 1000); err == nil {
+		observability.SetGauge(observability.OutboxPending, int64(len(pending)))
+	}
 	entries, err := w.Ledger.ClaimOutbox(ctx, w.Batch)
 	if err != nil || len(entries) == 0 {
 		return err

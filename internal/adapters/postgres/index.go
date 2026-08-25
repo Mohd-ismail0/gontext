@@ -3,9 +3,11 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -138,8 +140,10 @@ ORDER BY ` + order + ` LIMIT $` + itoa(limitIdx)
 
 		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
-			// Fallback for pre-006 schemas without search_tsv: bounded substring scan.
-			return idx.fallbackScan(ctx, tx, orgID, q, limit, filters, &hits)
+			if isMissingFTSColumn(err) {
+				return idx.fallbackScan(ctx, tx, orgID, q, limit, filters, &hits)
+			}
+			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
@@ -160,9 +164,14 @@ ORDER BY ` + order + ` LIMIT $` + itoa(limitIdx)
 }
 
 func (idx *Index) fallbackScan(ctx context.Context, tx pgx.Tx, orgID, q string, limit int, filters map[string]string, hits *[]ports.SearchHit) error {
+	scanCap := 500
+	if limit > scanCap {
+		scanCap = limit
+	}
 	rows, err := tx.Query(ctx, `
 SELECT resource_id, revision_id, text, tags, attributes
-FROM search_documents WHERE organization_id=$1`, orgID)
+FROM search_documents WHERE organization_id=$1
+ORDER BY updated_at DESC LIMIT $2`, orgID, scanCap)
 	if err != nil {
 		return err
 	}
@@ -343,4 +352,19 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+func isMissingFTSColumn(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		if pgErr.Code == "42703" && strings.Contains(pgErr.Message, "search_tsv") {
+			return true
+		}
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "search_tsv") &&
+		(strings.Contains(msg, "42703") || strings.Contains(msg, "does not exist") || strings.Contains(msg, "undefined column"))
 }

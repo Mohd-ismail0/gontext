@@ -386,6 +386,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 	if pgPool != nil {
 		changeFeed.Durable = postgres.NewWebhookStore(pgPool)
 	}
+	identity = authn.WithAPIKeys(identity, creds)
 	delSvc := &deletion.Service{
 		Ledger: ledger, Evidence: evidence, Index: index, Authz: authz,
 		Audit: auditLog, Changes: changeFeed, Holds: holds,
@@ -434,7 +435,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 					migOK = false
 					migDetail = err.Error()
 				} else {
-					migDetail = "all migrations applied (007+ FTS, outbox lease, credentials/webhooks)"
+					migDetail = "all migrations applied (008+ outbox claim disambiguation, org-scoped revoke)"
 				}
 			}
 			checks["migrations"] = map[string]any{"ok": migOK, "detail": migDetail}
@@ -676,7 +677,7 @@ func runDoctor() error {
 	} else if ftsOK {
 		fmt.Println("doctor: search_documents.search_tsv present")
 	} else {
-		fmt.Println("doctor: search_documents.search_tsv missing (optional until migration 006)")
+		return fmt.Errorf("search_documents.search_tsv missing; apply migration 006+")
 	}
 
 	if url := strings.TrimSpace(os.Getenv("NATS_URL")); url != "" {
