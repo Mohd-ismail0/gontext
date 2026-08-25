@@ -1,11 +1,9 @@
-# Context Fabric — Authoritative Reference Architecture
+# Context Fabric — Historical Reference Architecture
 
-**Status:** Final consolidated architecture decision. This is the sole authoritative
-design document for the repository. It incorporates the platform survey, ingestion
-architecture, security/governance review, strategic recommendation, stress test,
-and independent review. Where an implementation choice is profile-specific, this
-document says so explicitly; derived indexes, brokers, parsers, and policy engines
-are replaceable adapters rather than universal product requirements.
+**Status:** Historical. Kept for background and rationale. Active decisions live in
+[`docs/adr/`](docs/adr/README.md); when this document conflicts with an ADR, the ADR
+wins (service topology, consistency vocabulary, OPA in first slice, Chatwoot-special
+intake, and related topics). Profile-specific choices remain adapter-level.
 
 **Scope:** A self-hosted, multi-tenant organizational context platform for customer
 and internal sources, durable ingestion, provenance, governed employee/agent

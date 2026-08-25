@@ -14,14 +14,20 @@
 *.key
 
 # Coverage / test output
+coverage/
 coverage.out
 coverage.html
 *.coverprofile
 *.test
+*.prof
+__debug_bin*
 
 # Go / build cache artifacts
 /dist/
 /vendor/
+
+# TypeScript incremental
+*.tsbuildinfo
 
 # IDE / editor
 .idea/
