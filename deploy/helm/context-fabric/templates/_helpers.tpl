@@ -153,4 +153,18 @@ app.kubernetes.io/instance: {{ .Release.Name }}
   value: /etc/context-fabric/config.yaml
 - name: MIGRATIONS_DIR
   value: "/migrations"
+- name: POSTGRES_ADMIN_USER
+  value: {{ .Values.dependencies.postgres.adminUser | default "postgres" | quote }}
+- name: POSTGRES_ADMIN_PASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.dependencies.postgres.existingSecret }}
+      key: {{ .Values.dependencies.postgres.adminPasswordKey }}
+- name: POSTGRES_ADMIN_DSN
+  value: {{ printf "postgres://$(POSTGRES_ADMIN_USER):$(POSTGRES_ADMIN_PASSWORD)@%s:%v/%s?sslmode=%s" .Values.dependencies.postgres.host (.Values.dependencies.postgres.port | int) .Values.dependencies.postgres.database .Values.dependencies.postgres.sslMode | quote }}
+- name: WEBHOOK_SIGNING_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.secrets.webhookSigning.existingSecret }}
+      key: {{ .Values.secrets.webhookSigning.key }}
 {{- end -}}

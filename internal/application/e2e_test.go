@@ -46,6 +46,7 @@ func TestE2EMemoryHappyPathAndRevoke(t *testing.T) {
 	}
 	authz.AddOrgMember(org, "alice")
 	authz.AddOrgMember(org, "user:alice")
+	authz.Grant("organization:"+org, "manager", "user:alice")
 
 	pipe := &retrieval.Pipeline{
 		Identity: identity,

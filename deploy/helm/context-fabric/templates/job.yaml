@@ -34,11 +34,6 @@ spec:
             - name: CONTEXT_FABRIC_ROLE
               value: migrate
             {{- include "context-fabric.env" . | nindent 12 }}
-            - name: POSTGRES_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.dependencies.postgres.existingSecret }}
-                  key: {{ .Values.dependencies.postgres.adminPasswordKey }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

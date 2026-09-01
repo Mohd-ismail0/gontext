@@ -17,5 +17,6 @@
 | [0013](0013-knowledge-graph-first.md) | Knowledge-graph-first context plane |
 | [0014](0014-durable-authz-tuple-sync.md) | Durable AuthZ tuple synchronization |
 | [0015](0015-sparse-first-retrieval-and-portable-mcp.md) | Sparse-first retrieval and portable MCP distribution |
+| [0016](0016-compose-first-production-release.md) | Compose-first production release |
 
 These ADRs supersede conflicting sections of `context-fabric-stress-test.md` where they disagree (service topology, consistency vocabulary, OPA in first slice, Chatwoot-special intake).

@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-context_fabric}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-postgres-admin}
+      POSTGRES_GATEWAY_PASSWORD: ${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}
     volumes:
       - demo_postgres:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d:ro
@@ -110,7 +111,7 @@ services:
     expose: ["8080", "8081"]
 
   migrate:
-    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -129,7 +130,7 @@ services:
 
   # role=all: serve+worker in one process (shared in-memory index).
   context-fabric:
-    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile

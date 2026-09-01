@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"log/slog"
+	"os"
 	"sync"
 	"time"
 
@@ -79,6 +81,39 @@ func (w *Worker) Stop() {
 		}
 	}
 	w.wg.Wait()
+}
+
+// Drain runs a best-effort final pass over relay, consume, webhook, and authz
+// work before shutdown (bounded by ctx).
+func (w *Worker) Drain(ctx context.Context) {
+	slog.Info("worker draining")
+	for {
+		if err := w.relayOnce(ctx); err != nil || ctx.Err() != nil {
+			break
+		}
+		pending, err := w.Ledger.ListOutboxPending(ctx, "", 1)
+		if err != nil || len(pending) == 0 {
+			break
+		}
+	}
+	_ = w.consumeOnce(ctx)
+	if w.ChangeFeed != nil {
+		for i := 0; i < 5 && ctx.Err() == nil; i++ {
+			if n := w.ChangeFeed.DeliverPending(ctx, nil, 2*time.Second, w.Batch); n == 0 {
+				break
+			}
+		}
+	}
+	for i := 0; i < 5 && ctx.Err() == nil; i++ {
+		if err := w.authzOnce(ctx); err != nil {
+			break
+		}
+		pending, _, err := w.Ledger.CountAuthzTuplePending(ctx, "")
+		if err != nil || pending == 0 {
+			break
+		}
+	}
+	slog.Info("worker drain complete")
 }
 
 func (w *Worker) relayLoop(ctx context.Context) {
@@ -402,6 +437,15 @@ func (w *Worker) consumeOnce(ctx context.Context) error {
 func RunWorker(ctx context.Context, w *Worker) {
 	w.Start(ctx)
 	<-ctx.Done()
+	drainTimeout := 30 * time.Second
+	if v := os.Getenv("WORKER_DRAIN_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			drainTimeout = d
+		}
+	}
+	drainCtx, cancel := context.WithTimeout(context.Background(), drainTimeout)
+	defer cancel()
+	w.Drain(drainCtx)
 	w.Stop()
 }
 

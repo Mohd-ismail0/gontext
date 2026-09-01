@@ -1,0 +1,5 @@
+# Placeholder NATS credentials path for NATS_CREDENTIALS env (optional NKEY/JWT creds).
+# Starter Compose uses NATS_URL user/password auth by default; replace this file when
+# migrating to operator-issued .creds files.
+
+token: replace-with-operator-nats-creds

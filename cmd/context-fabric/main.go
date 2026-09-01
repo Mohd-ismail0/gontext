@@ -34,11 +34,15 @@ import (
 	"github.com/xsama/context-fabric/internal/ingest"
 	"github.com/xsama/context-fabric/internal/mapping"
 	"github.com/xsama/context-fabric/internal/migrate"
+	"github.com/xsama/context-fabric/internal/observability"
 	"github.com/xsama/context-fabric/internal/policy"
 	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/quota"
 	"github.com/xsama/context-fabric/internal/retrieval"
 )
+
+// buildVersion is set at link time via -ldflags; overridden by CONTEXT_FABRIC_VERSION env.
+var buildVersion = "dev"
 
 var roles = map[string]bool{
 	"serve": true, "worker": true, "connector": true,
@@ -54,6 +58,12 @@ var oneShotRoles = map[string]bool{
 }
 
 func main() {
+	observability.SetupLogging()
+	observability.SetBuildInfo(observability.BuildInfoLabels{
+		Version:   firstEnv(buildVersion, "CONTEXT_FABRIC_VERSION", "1.0.0"),
+		Commit:    firstEnv("dev", "CONTEXT_FABRIC_COMMIT", "GIT_COMMIT"),
+		GoVersion: firstEnv("", "GO_VERSION"),
+	})
 	role := resolveRole()
 	if !roles[role] {
 		fmt.Fprintf(os.Stderr, "unknown role %q; want serve|worker|connector|migrate|bootstrap|doctor|backup|restore|reconcile|all\n", role)
@@ -127,50 +137,66 @@ func resolveRole() string {
 	return "serve"
 }
 
-func profileName() string {
-	return strings.ToLower(firstEnv("PROFILE", "CONTEXT_FABRIC_PROFILE", "starter"))
-}
-
-func useMemory() bool {
-	if strings.EqualFold(os.Getenv("CONTEXT_FABRIC_MEMORY"), "1") ||
-		strings.EqualFold(os.Getenv("CONTEXT_FABRIC_MEMORY"), "true") {
-		return true
-	}
-	// Explicit demo without Postgres → in-process memory ledger.
-	dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN"))
-	return dsn == "" && profileName() == "demo"
-}
-
-func allowMemoryAuth() bool {
-	// Local forgeable tokens + memory OpenFGA only when explicitly requested.
-	return useMemory() || profileName() == "demo"
-}
-
-func allowStubOps() bool {
-	if strings.EqualFold(os.Getenv("CONTEXT_FABRIC_ALLOW_STUB_OPS"), "1") ||
-		strings.EqualFold(os.Getenv("CONTEXT_FABRIC_ALLOW_STUB_OPS"), "true") {
-		return true
-	}
-	return allowMemoryAuth()
-}
-
 func runServe(role string) error {
-	svc, srv, bus, cleanup, err := wire(role)
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	svc, srv, bus, cleanup, err := wire(role, cfg)
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 
-	addr := firstEnv("LISTEN_ADDR", "CONTEXT_FABRIC_LISTEN_ADDR", ":8080")
-	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
+	addr := cfg.ListenAddr
+	metricsAddr := cfg.MetricsListenAddr
+	httpCfg := httpServerConfigFromEnv(cfg)
+	srv.SetMiddleware(httpapi.DefaultMiddlewareConfig())
+
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: httpCfg.ReadHeaderTimeout,
+		ReadTimeout:       httpCfg.ReadTimeout,
+		WriteTimeout:      httpCfg.WriteTimeout,
+		IdleTimeout:       httpCfg.IdleTimeout,
+		MaxHeaderBytes:    httpCfg.MaxHeaderBytes,
+	}
+
+	var metricsSrv *http.Server
+	if metricsAddr != "" {
+		metricsSrv = &http.Server{
+			Addr:              metricsAddr,
+			Handler:           observability.Handler(),
+			ReadHeaderTimeout: httpCfg.ReadHeaderTimeout,
+			ReadTimeout:       httpCfg.ReadTimeout,
+			WriteTimeout:      httpCfg.WriteTimeout,
+			IdleTimeout:       httpCfg.IdleTimeout,
+			MaxHeaderBytes:    httpCfg.MaxHeaderBytes,
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	errCh := make(chan error, 2)
+	if metricsSrv != nil {
+		go func() {
+			fmt.Printf("context-fabric metrics: listening on %s\n", metricsAddr)
+			if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				errCh <- fmt.Errorf("metrics: %w", err)
+			}
+		}()
+	}
+
 	go func() {
 		<-ctx.Done()
 		srv.SetReady(false)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), httpCfg.ShutdownTimeout)
 		defer cancel()
+		if metricsSrv != nil {
+			_ = metricsSrv.Shutdown(shutdownCtx)
+		}
 		_ = httpSrv.Shutdown(shutdownCtx)
 	}()
 
@@ -179,11 +205,75 @@ func runServe(role string) error {
 		go app.RunWorker(ctx, w)
 	}
 
-	fmt.Printf("context-fabric %s: listening on %s (memory=%v)\n", role, addr, useMemory())
-	return httpSrv.ListenAndServe()
+	fmt.Printf("context-fabric %s: listening on %s (memory=%v)\n", role, addr, cfg.UseMemory())
+	go func() {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- fmt.Errorf("http: %w", err)
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return http.ErrServerClosed
+	case err := <-errCh:
+		return err
+	}
 }
 
-func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus, func(), error) {
+type httpServerConfig struct {
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	MaxHeaderBytes    int
+	ShutdownTimeout   time.Duration
+}
+
+func httpServerConfigFromEnv(cfg config.Config) httpServerConfig {
+	grace := time.Duration(cfg.Runtime.ShutdownGraceSeconds) * time.Second
+	if v := strings.TrimSpace(os.Getenv("SHUTDOWN_GRACE_SECONDS")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			grace = time.Duration(n) * time.Second
+		}
+	}
+	if grace <= 0 {
+		grace = 10 * time.Second
+	}
+	return httpServerConfig{
+		ReadHeaderTimeout: durationEnv("HTTP_READ_HEADER_TIMEOUT", 5*time.Second),
+		ReadTimeout:       durationEnv("HTTP_READ_TIMEOUT", 30*time.Second),
+		WriteTimeout:      durationEnv("HTTP_WRITE_TIMEOUT", 30*time.Second),
+		IdleTimeout:       durationEnv("HTTP_IDLE_TIMEOUT", 120*time.Second),
+		MaxHeaderBytes:    intEnv("HTTP_MAX_HEADER_BYTES", 1<<20),
+		ShutdownTimeout:   grace,
+	}
+}
+
+func durationEnv(key string, def time.Duration) time.Duration {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
+}
+
+func intEnv(key string, def int) int {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return def
+	}
+	return n
+}
+
+func wire(role string, cfg config.Config) (*app.ApplicationService, *httpapi.Server, ports.EventBus, func(), error) {
 	pol := policy.New()
 	auditLog := audit.Logger(audit.NewMemory())
 	q := quota.NewLimiter(quota.DefaultLimits())
@@ -211,7 +301,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 	bus = natsbus.NewNoop()
 	creds = memory.NewCredentialStore()
 
-	if useMemory() {
+	if cfg.UseMemory() {
 		identity = authn.NewLocal()
 		store := memory.NewStore()
 		idx := memory.NewIndex()
@@ -229,8 +319,8 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		authz = memAuthz
 		modelID = memAuthz.ModelID
 		// Memory profile: optional NATS; silent noop when unreachable.
-		if u := strings.TrimSpace(os.Getenv("NATS_URL")); u != "" {
-			if b, err := natsbus.Connect(u); err == nil {
+		if u := strings.TrimSpace(cfg.NATS.URL); u != "" {
+			if b, err := natsbus.ConnectConfig(cfg.NATS); err == nil {
 				bus = b
 				prev := cleanup
 				cleanup = func() {
@@ -240,10 +330,6 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			}
 		}
 	} else {
-		cfg, err := config.Load()
-		if err != nil {
-			return nil, nil, nil, nil, err
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		pool, err := postgres.Connect(ctx, cfg.Postgres.DSN)
@@ -260,16 +346,18 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		exportJobs = pgStore
 		feedStore = pgStore
 		creds = postgres.NewCredentialStore(pool)
+		holds = postgres.NewLegalHoldStore(pool)
 		auditLog = &audit.LedgerLogger{Writer: pgStore}
 		evidence = memory.NewEvidence()
 		if strings.TrimSpace(cfg.S3.Endpoint) != "" {
-			s3e, err := s3store.New(s3store.Config{
+			s3e, err := newS3Evidence(s3store.RouterConfig{
 				Endpoint: cfg.S3.Endpoint, Region: cfg.S3.Region,
 				AccessKeyID: cfg.S3.AccessKeyID, SecretAccessKey: cfg.S3.SecretAccessKey,
-				PathStyle: cfg.S3.PathStyle, Bucket: cfg.S3.BucketQuarantine,
+				PathStyle: cfg.S3.PathStyle,
+				Quarantine: cfg.S3.BucketQuarantine, Raw: cfg.S3.BucketRaw, Derived: cfg.S3.BucketDerived,
 			})
 			if err != nil {
-				if allowMemoryAuth() {
+				if cfg.AllowMemoryAuth() {
 					fmt.Fprintf(os.Stderr, "s3 adapter warning: %v (demo: using memory evidence)\n", err)
 				} else {
 					return nil, nil, nil, nil, fmt.Errorf("s3 evidence required (fail-closed): %w", err)
@@ -279,7 +367,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			}
 		}
 
-		indexBackend := strings.ToLower(strings.TrimSpace(os.Getenv("INDEX_BACKEND")))
+		indexBackend := strings.ToLower(strings.TrimSpace(cfg.Runtime.IndexBackend))
 		switch indexBackend {
 		case "postgres", "pg", "search_documents":
 			pgIdx := postgres.NewIndex(pool)
@@ -298,7 +386,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			snippets = memIdx
 		}
 
-		if allowMemoryAuth() {
+		if cfg.AllowMemoryAuth() {
 			// PROFILE=demo: Local identity + memory OpenFGA even with Postgres ledger.
 			identity = authn.NewLocal()
 			memAuthz := openfga.NewMemory()
@@ -331,11 +419,11 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		if natsURL == "" {
 			natsURL = strings.TrimSpace(os.Getenv("NATS_URL"))
 		}
-		if allowMemoryAuth() {
+		if cfg.AllowMemoryAuth() {
 			// Demo+Postgres: prefer live NATS; fall back to in-process noop with warning.
 			if natsURL == "" {
 				fmt.Fprintln(os.Stderr, "nats: demo profile using in-process noop bus (set NATS_URL for JetStream)")
-			} else if b, err := natsbus.Connect(natsURL); err == nil {
+			} else if b, err := natsbus.ConnectConfig(cfg.NATS); err == nil {
 				bus = b
 				prev := cleanup
 				cleanup = func() {
@@ -349,7 +437,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			if natsURL == "" {
 				return nil, nil, nil, nil, fmt.Errorf("NATS_URL is required when not using memory/demo profile")
 			}
-			b, err := natsbus.Connect(natsURL)
+			b, err := natsbus.ConnectConfig(cfg.NATS)
 			if err != nil {
 				return nil, nil, nil, nil, fmt.Errorf("nats required (fail-closed): %w", err)
 			}
@@ -363,11 +451,14 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 	}
 
 	// Also wire S3 when endpoint is set in memory/demo mode.
-	if ep := strings.TrimSpace(os.Getenv("S3_ENDPOINT")); ep != "" && useMemory() {
-		if s3e, err := s3store.New(s3store.Config{
+	if ep := strings.TrimSpace(os.Getenv("S3_ENDPOINT")); ep != "" && cfg.UseMemory() {
+		if s3e, err := newS3Evidence(s3store.RouterConfig{
 			Endpoint: ep, Region: firstEnv("S3_REGION", "us-east-1"),
 			AccessKeyID: os.Getenv("S3_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-			PathStyle: true, Bucket: firstEnv("S3_BUCKET_QUARANTINE", "context-quarantine"),
+			PathStyle: true,
+			Quarantine: firstEnv("S3_BUCKET_QUARANTINE", "context-quarantine"),
+			Raw:        firstEnv("S3_BUCKET_RAW", "context-raw"),
+			Derived:    firstEnv("S3_BUCKET_DERIVED", "context-derived"),
 		}); err == nil {
 			evidence = s3e
 		} else {
@@ -375,13 +466,17 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		}
 	}
 
-	secret, err := requireWebhookSigningSecret()
+	webhookSecret, err := requireWebhookSigningSecret(cfg)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	changeFeed := changes.New(feedStore, secret)
+	deletionSecret, err := requireDeletionSigningSecret(cfg)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	changeFeed := changes.New(feedStore, webhookSecret)
 	if feedStore == nil && changesL != nil {
-		changeFeed = changes.New(changesL, secret)
+		changeFeed = changes.New(changesL, webhookSecret)
 	}
 	if pgPool != nil {
 		changeFeed.Durable = postgres.NewWebhookStore(pgPool)
@@ -389,7 +484,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 	identity = authn.WithAPIKeys(identity, creds)
 	delSvc := &deletion.Service{
 		Ledger: ledger, Evidence: evidence, Index: index, Authz: authz,
-		Audit: auditLog, Changes: changeFeed, Holds: holds,
+		Audit: auditLog, Changes: changeFeed, Holds: holds, SignKey: deletionSecret,
 	}
 	expSvc := &export.Service{Ledger: ledger}
 
@@ -419,7 +514,7 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 		Retrieve: pipe,
 		Ingest:   ing,
 		Build: app.VersionInfo{
-			ProductVersion: firstEnv("CONTEXT_FABRIC_VERSION", "0.0.0-dev"),
+			ProductVersion: firstEnv(buildVersion, "CONTEXT_FABRIC_VERSION", "0.0.0-dev"),
 			AuthzModelID:   modelID,
 		},
 		Ready: func() bool { return true },
@@ -427,15 +522,15 @@ func wire(role string) (*app.ApplicationService, *httpapi.Server, ports.EventBus
 			checks := map[string]any{}
 			migOK := true
 			migDetail := "memory profile (no schema_migrations)"
-			if !useMemory() {
+			if !cfg.UseMemory() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				defer cancel()
-				dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN"))
+				dsn := strings.TrimSpace(cfg.Postgres.DSN)
 				if err := migrate.CheckApplied(ctx, dsn, migrate.MigrationsDir()); err != nil {
 					migOK = false
 					migDetail = err.Error()
 				} else {
-					migDetail = "all migrations applied (008+ outbox claim disambiguation, org-scoped revoke)"
+					migDetail = "all migrations applied (009+ legal holds, outbox claim disambiguation)"
 				}
 			}
 			checks["migrations"] = map[string]any{"ok": migOK, "detail": migDetail}
@@ -501,7 +596,12 @@ func runUntilSignal(role string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if role == "worker" {
-		svc, _, bus, cleanup, err := wire(role)
+		cfg, err := config.Load()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "worker config: %v\n", err)
+			os.Exit(1)
+		}
+		svc, _, bus, cleanup, err := wire(role, cfg)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "worker wire: %v\n", err)
 			os.Exit(1)
@@ -534,9 +634,13 @@ func runConnector(args []string) error {
 }
 
 func runMigrate() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
 	dsn := migrate.AdminDSN()
 	if dsn == "" {
-		if useMemory() || profileName() == "demo" {
+		if cfg.UseMemory() || cfg.Profile.IsDemo() {
 			fmt.Println("migrate: no DSN; skipping (memory/demo profile)")
 			return nil
 		}
@@ -551,7 +655,11 @@ func runMigrate() error {
 }
 
 func runBootstrap() error {
-	if allowStubOps() && migrate.AdminDSN() == "" {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if cfg.AllowStubOps() && migrate.AdminDSN() == "" {
 		fmt.Println("bootstrap: memory/demo stub — no DB; OpenFGA store seeding skipped")
 		return nil
 	}
@@ -570,9 +678,13 @@ func runBootstrap() error {
 // runOps executes scripts/{backup,restore,reconcile}.sh when bash is available.
 // Falls back to an acknowledged stub only when CONTEXT_FABRIC_ALLOW_STUB_OPS is set.
 func runOps(role string, args []string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
 	script, err := locateOpsScript(role)
 	if err != nil {
-		if allowStubOps() {
+		if cfg.AllowStubOps() {
 			fmt.Printf("%s: script missing; stub allowed (CONTEXT_FABRIC_ALLOW_STUB_OPS or memory/demo)\n", role)
 			return nil
 		}
@@ -580,7 +692,7 @@ func runOps(role string, args []string) error {
 	}
 	bash, err := exec.LookPath("bash")
 	if err != nil {
-		if allowStubOps() {
+		if cfg.AllowStubOps() {
 			fmt.Printf("%s: bash not found; stub allowed\n", role)
 			return nil
 		}
@@ -619,12 +731,16 @@ func locateOpsScript(role string) (string, error) {
 }
 
 func runDoctor() error {
-	if useMemory() {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	if cfg.UseMemory() {
 		fmt.Println("doctor: memory profile ok")
 		return nil
 	}
 
-	dsn := strings.TrimSpace(os.Getenv("POSTGRES_DSN"))
+	dsn := strings.TrimSpace(cfg.Postgres.DSN)
 	if dsn == "" {
 		dsn = migrate.AdminDSN()
 	}
@@ -641,29 +757,10 @@ func runDoctor() error {
 	defer pool.Close()
 	fmt.Println("doctor: postgres ping ok")
 
-	var migOK bool
-	err = pool.QueryRow(ctx,
-		`SELECT EXISTS(
-		   SELECT 1 FROM information_schema.tables
-		   WHERE table_schema = 'public' AND table_name = 'schema_migrations'
-		 )`,
-	).Scan(&migOK)
-	if err != nil {
-		return fmt.Errorf("migrations table check: %w", err)
+	if err := migrate.CheckApplied(ctx, dsn, migrate.MigrationsDir()); err != nil {
+		return fmt.Errorf("migration head: %w", err)
 	}
-	if !migOK {
-		return fmt.Errorf("schema_migrations missing; run migrate")
-	}
-	var migCount int
-	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&migCount); err != nil {
-		fmt.Printf("doctor: schema_migrations count warning: %v\n", err)
-	} else {
-		fmt.Printf("doctor: schema_migrations count=%d (hint: compare to migrations/ files)\n", migCount)
-		if migCount == 0 {
-			return fmt.Errorf("schema_migrations empty; run migrate")
-		}
-	}
-	fmt.Println("doctor: schema_migrations ok")
+	fmt.Println("doctor: migration head ok (all known migrations applied)")
 
 	var ftsOK bool
 	err = pool.QueryRow(ctx,
@@ -680,37 +777,133 @@ func runDoctor() error {
 		return fmt.Errorf("search_documents.search_tsv missing; apply migration 006+")
 	}
 
-	if url := strings.TrimSpace(os.Getenv("NATS_URL")); url != "" {
-		if b, err := natsbus.Connect(url); err != nil {
-			fmt.Printf("doctor: nats warning: %v\n", err)
+	if url := strings.TrimSpace(cfg.NATS.URL); url != "" {
+		if b, err := natsbus.ConnectConfig(cfg.NATS); err != nil {
+			if cfg.AllowMemoryAuth() {
+				fmt.Printf("doctor: nats warning: %v\n", err)
+			} else {
+				return fmt.Errorf("nats: %w", err)
+			}
 		} else {
 			b.Close()
 			fmt.Println("doctor: nats ok")
 		}
+	} else if cfg.AllowMemoryAuth() {
+		fmt.Println("doctor: nats skipped (NATS_URL unset; demo profile)")
 	} else {
-		fmt.Println("doctor: nats skipped (NATS_URL unset)")
+		return fmt.Errorf("NATS_URL required for non-demo profiles")
 	}
 
 	if ep := strings.TrimSpace(os.Getenv("S3_ENDPOINT")); ep != "" {
-		if _, err := s3store.New(s3store.Config{
+		if rt, err := newS3Evidence(s3store.RouterConfig{
 			Endpoint: ep, Region: firstEnv("S3_REGION", "us-east-1"),
 			AccessKeyID: os.Getenv("S3_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-			PathStyle: true, Bucket: firstEnv("S3_BUCKET_QUARANTINE", "context-quarantine"),
+			PathStyle: true,
+			Quarantine: firstEnv("S3_BUCKET_QUARANTINE", "context-quarantine"),
+			Raw:        firstEnv("S3_BUCKET_RAW", "context-raw"),
+			Derived:    firstEnv("S3_BUCKET_DERIVED", "context-derived"),
 		}); err != nil {
 			fmt.Printf("doctor: s3 warning: %v\n", err)
 		} else {
-			fmt.Println("doctor: s3 config ok")
+			q, raw, derived := rt.Buckets()
+			fmt.Printf("doctor: s3 buckets quarantine=%s raw=%s derived=%s\n", q, raw, derived)
+			fmt.Println("doctor: s3 capability note: enable bucket versioning on all evidence buckets (MinIO: mc version enable)")
+			fmt.Println("doctor: s3 capability note: object-lock/WORM optional for compliance; legal holds enforced in Postgres legal_holds")
 		}
 	} else {
 		fmt.Println("doctor: s3 skipped (S3_ENDPOINT unset)")
 	}
 
-	if allowMemoryAuth() {
+	var gatewayRoleOK bool
+	err = pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = 'context_gateway' AND NOT rolbypassrls)`,
+	).Scan(&gatewayRoleOK)
+	if err != nil {
+		fmt.Printf("doctor: context_gateway NOBYPASSRLS check warning: %v\n", err)
+	} else if !gatewayRoleOK {
+		return fmt.Errorf("context_gateway missing or has BYPASSRLS; runtime role must be NOBYPASSRLS")
+	} else {
+		fmt.Println("doctor: context_gateway NOBYPASSRLS ok")
+	}
+
+	var legalHoldsForceRLS bool
+	err = pool.QueryRow(ctx,
+		`SELECT c.relforcerowsecurity
+		   FROM pg_class c
+		   JOIN pg_namespace n ON n.oid = c.relnamespace
+		  WHERE n.nspname = 'public' AND c.relname = 'legal_holds'`,
+	).Scan(&legalHoldsForceRLS)
+	if err != nil {
+		fmt.Printf("doctor: legal_holds FORCE RLS check warning: %v (run migrate 009+)\n", err)
+	} else if !legalHoldsForceRLS {
+		return fmt.Errorf("legal_holds missing FORCE ROW LEVEL SECURITY; apply migration 009")
+	} else {
+		fmt.Println("doctor: legal_holds FORCE ROW LEVEL SECURITY ok")
+	}
+
+	var recordsForceRLS bool
+	err = pool.QueryRow(ctx,
+		`SELECT c.relforcerowsecurity
+		   FROM pg_class c
+		   JOIN pg_namespace n ON n.oid = c.relnamespace
+		  WHERE n.nspname = 'public' AND c.relname = 'records'`,
+	).Scan(&recordsForceRLS)
+	if err != nil {
+		fmt.Printf("doctor: records FORCE RLS sample warning: %v\n", err)
+	} else if !recordsForceRLS {
+		return fmt.Errorf("records missing FORCE ROW LEVEL SECURITY")
+	} else {
+		fmt.Println("doctor: records FORCE ROW LEVEL SECURITY sample ok")
+	}
+
+	for _, table := range []string{"outbox", "search_documents"} {
+		var forceRLS bool
+		err = pool.QueryRow(ctx,
+			`SELECT c.relforcerowsecurity
+			   FROM pg_class c
+			   JOIN pg_namespace n ON n.oid = c.relnamespace
+			  WHERE n.nspname = 'public' AND c.relname = $1`,
+			table,
+		).Scan(&forceRLS)
+		if err != nil {
+			fmt.Printf("doctor: %s FORCE RLS check warning: %v\n", table, err)
+		} else if !forceRLS {
+			return fmt.Errorf("%s missing FORCE ROW LEVEL SECURITY", table)
+		} else {
+			fmt.Printf("doctor: %s FORCE ROW LEVEL SECURITY ok\n", table)
+		}
+	}
+
+	if cfg.AllowMemoryAuth() {
+		fmt.Println("doctor: oidc skipped (memory/demo auth)")
+	} else {
+		issuer := strings.TrimSpace(cfg.OIDC.Issuer)
+		if issuer == "" {
+			return fmt.Errorf("OIDC_ISSUER required for non-demo profiles")
+		}
+		oidc := authn.NewOIDC(authn.OIDCConfig{
+			Issuer:       issuer,
+			Audience:     strings.TrimSpace(cfg.OIDC.Audience),
+			DiscoveryURL: strings.TrimSpace(cfg.OIDC.DiscoveryURL),
+			JWKSURL:      strings.TrimSpace(cfg.OIDC.JWKSURL),
+		})
+		meta, err := oidc.Discover(ctx)
+		if err != nil {
+			return fmt.Errorf("oidc discovery: %w", err)
+		}
+		fmt.Printf("doctor: oidc discovery ok issuer=%s jwks=%s\n", meta.Issuer, meta.JWKSURI)
+	}
+
+	if cfg.AllowMemoryAuth() {
 		fmt.Println("doctor: openfga skipped (memory/demo auth)")
 	} else {
 		if err := validateOpenFGAStoreID(); err != nil {
 			return err
 		}
+		if token := strings.TrimSpace(cfg.OpenFGA.APIToken); token == "" {
+			return fmt.Errorf("OPENFGA_API_TOKEN required for non-demo profiles")
+		}
+		fmt.Println("doctor: openfga api token set")
 		modelID := strings.TrimSpace(firstEnv("OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID", ""))
 		if modelID == "" || modelID == "demo-model-v1" {
 			if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
@@ -729,12 +922,20 @@ func runDoctor() error {
 		fmt.Println("doctor: openfga config ok")
 	}
 
-	if allowMemoryAuth() || useMemory() {
+	if cfg.AllowMemoryAuth() {
 		fmt.Println("doctor: WEBHOOK_SIGNING_SECRET skipped (memory/demo)")
-	} else if strings.TrimSpace(os.Getenv("WEBHOOK_SIGNING_SECRET")) == "" {
-		return fmt.Errorf("WEBHOOK_SIGNING_SECRET required for non-demo profiles")
+	} else if _, err := requireWebhookSigningSecret(cfg); err != nil {
+		return err
 	} else {
 		fmt.Println("doctor: WEBHOOK_SIGNING_SECRET set")
+	}
+
+	if cfg.AllowMemoryAuth() {
+		fmt.Println("doctor: DELETION_SIGNING_SECRET skipped (memory/demo)")
+	} else if _, err := requireDeletionSigningSecret(cfg); err != nil {
+		return err
+	} else {
+		fmt.Println("doctor: DELETION_SIGNING_SECRET set")
 	}
 
 	fmt.Println("doctor: connectivity ok")
@@ -938,20 +1139,51 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func requireWebhookSigningSecret() ([]byte, error) {
-	s := strings.TrimSpace(os.Getenv("WEBHOOK_SIGNING_SECRET"))
+func requireWebhookSigningSecret(cfg config.Config) ([]byte, error) {
+	s := strings.TrimSpace(cfg.Secrets.WebhookSigningSecret)
 	if s != "" {
+		if !cfg.AllowMemoryAuth() && config.IsPlaceholderValue(s) {
+			return nil, fmt.Errorf("WEBHOOK_SIGNING_SECRET contains a bootstrap placeholder")
+		}
 		return []byte(s), nil
 	}
-	if allowMemoryAuth() || useMemory() {
-		// Demo/memory only: ephemeral secret for local tests.
+	if cfg.AllowMemoryAuth() {
 		return []byte("demo-webhook-signing-secret"), nil
 	}
 	return nil, fmt.Errorf("WEBHOOK_SIGNING_SECRET is required for production profiles")
 }
 
-func webhookSigningSecret() []byte {
-	s, _ := requireWebhookSigningSecret()
+func requireDeletionSigningSecret(cfg config.Config) ([]byte, error) {
+	s := strings.TrimSpace(cfg.Secrets.DeletionSigningSecret)
+	if s != "" {
+		if !cfg.AllowMemoryAuth() && config.IsPlaceholderValue(s) {
+			return nil, fmt.Errorf("DELETION_SIGNING_SECRET contains a bootstrap placeholder")
+		}
+		return []byte(s), nil
+	}
+	if cfg.AllowMemoryAuth() {
+		return []byte("demo-deletion-signing-secret"), nil
+	}
+	return nil, fmt.Errorf("DELETION_SIGNING_SECRET is required for production profiles")
+}
+
+func envFileValue(key string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	path := strings.TrimSpace(os.Getenv(key + "_FILE"))
+	if path == "" {
+		return ""
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func webhookSigningSecret(cfg config.Config) []byte {
+	s, _ := requireWebhookSigningSecret(cfg)
 	return s
 }
 
@@ -973,6 +1205,10 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return def
+}
+
+func newS3Evidence(cfg s3store.RouterConfig) (*s3store.EvidenceRouter, error) {
+	return s3store.NewRouter(cfg)
 }
 
 func asRelWriter(authz ports.AuthorizationProvider) ports.RelationshipWriter {

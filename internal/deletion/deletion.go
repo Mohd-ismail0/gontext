@@ -179,7 +179,11 @@ func (s *Service) Run(ctx context.Context, req Request) (CompletionManifest, err
 	status := "completed"
 	hold := false
 	if s.Holds != nil {
-		hold, _ = s.Holds.HasLegalHold(ctx, req.OrgID, req.ResourceID)
+		var holdErr error
+		hold, holdErr = s.Holds.HasLegalHold(ctx, req.OrgID, req.ResourceID)
+		if holdErr != nil {
+			return CompletionManifest{}, holdErr
+		}
 	}
 	if hold {
 		status = "blocked"
@@ -189,15 +193,28 @@ func (s *Service) Run(ctx context.Context, req Request) (CompletionManifest, err
 			return s.Ledger.UpsertRecord(ctx, tx, rec)
 		})
 	} else {
+		var purgeErr error
+		hadEvidence := false
 		for _, d := range derivatives {
 			if d.Kind != "evidence" || s.Evidence == nil {
 				continue
 			}
+			hadEvidence = true
 			key, ver := splitEvidenceRef(d.Ref)
-			_ = s.Evidence.DeleteVersion(ctx, key, ver)
-			evidenceErased = true
+			if err := s.Evidence.DeleteVersion(ctx, key, ver); err != nil {
+				purgeErr = err
+				break
+			}
 		}
-		rec.State = "PURGED"
+		if purgeErr != nil {
+			status = "blocked"
+			blockedReason = "EVIDENCE_PURGE_FAILED"
+			rec.State = "PURGE_PENDING"
+			evidenceErased = false
+		} else {
+			evidenceErased = hadEvidence
+			rec.State = "PURGED"
+		}
 		_ = s.Ledger.WithOrgTx(ctx, req.OrgID, func(ctx context.Context, tx ports.Tx) error {
 			return s.Ledger.UpsertRecord(ctx, tx, rec)
 		})
@@ -281,7 +298,7 @@ func (s *Service) sign(m CompletionManifest) string {
 	raw, _ := json.Marshal(cp)
 	key := s.SignKey
 	if len(key) == 0 {
-		key = []byte("context-fabric-deletion")
+		return ""
 	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write(raw)
@@ -311,7 +328,7 @@ func VerifySignature(key []byte, m CompletionManifest) bool {
 	cp.Signature = ""
 	raw, _ := json.Marshal(cp)
 	if len(key) == 0 {
-		key = []byte("context-fabric-deletion")
+		return false
 	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write(raw)

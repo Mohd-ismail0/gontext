@@ -4,12 +4,14 @@ package natsbus
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/xsama/context-fabric/internal/config"
 	"github.com/xsama/context-fabric/internal/ports"
 )
 
@@ -17,11 +19,11 @@ const defaultStream = "CONTEXT"
 
 // Bus is a NATS JetStream EventBus.
 type Bus struct {
-	nc      *nats.Conn
-	js      nats.JetStreamContext
-	stream  string
-	mu      sync.Mutex
-	subs    []*nats.Subscription
+	nc     *nats.Conn
+	js     nats.JetStreamContext
+	stream string
+	mu     sync.Mutex
+	subs   []*nats.Subscription
 }
 
 // Connect opens a JetStream connection. Returns NoopBus-compatible error path via ConnectOrNoop.
@@ -29,10 +31,47 @@ func Connect(url string, opts ...nats.Option) (*Bus, error) {
 	if strings.TrimSpace(url) == "" {
 		return nil, fmt.Errorf("nats url required")
 	}
-	nc, err := nats.Connect(url, opts...)
+	nc, err := nats.Connect(url, append(defaultConnectOptions(), opts...)...)
 	if err != nil {
 		return nil, err
 	}
+	return newBus(nc)
+}
+
+// ConnectConfig connects using runtime NATS configuration (URL + optional credentials file).
+func ConnectConfig(cfg config.NATSConfig) (*Bus, error) {
+	url := strings.TrimSpace(cfg.URL)
+	if url == "" {
+		return nil, fmt.Errorf("nats url required")
+	}
+	opts := defaultConnectOptions()
+	if path := credentialsFilePath(cfg.Credentials); path != "" {
+		opts = append(opts, nats.UserCredentials(path))
+	}
+	return Connect(url, opts...)
+}
+
+func credentialsFilePath(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if st, err := os.Stat(raw); err == nil && !st.IsDir() {
+		return raw
+	}
+	return ""
+}
+
+func defaultConnectOptions() []nats.Option {
+	return []nats.Option{
+		nats.MaxReconnects(-1),
+		nats.ReconnectWait(2 * time.Second),
+		nats.ReconnectBufSize(4 << 20),
+		nats.Timeout(10 * time.Second),
+	}
+}
+
+func newBus(nc *nats.Conn) (*Bus, error) {
 	js, err := nc.JetStream()
 	if err != nil {
 		nc.Close()
@@ -174,10 +213,17 @@ func (b *Bus) FetchIndex(ctx context.Context, max int, wait time.Duration) ([]po
 
 const indexConsumerName = "context-index-projector"
 
-// Close drains the connection.
+// Close unsubscribes consumers, drains, and closes the connection.
 func (b *Bus) Close() {
 	if b == nil || b.nc == nil {
 		return
+	}
+	b.mu.Lock()
+	subs := append([]*nats.Subscription(nil), b.subs...)
+	b.subs = nil
+	b.mu.Unlock()
+	for _, sub := range subs {
+		_ = sub.Unsubscribe()
 	}
 	_ = b.nc.Drain()
 	b.nc.Close()

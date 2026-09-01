@@ -1,0 +1,80 @@
+# Context Fabric Prometheus alerting rules (starter/scaled profiles).
+# Mount into Prometheus / Alertmanager rule files.
+
+groups:
+  - name: context-fabric.availability
+    rules:
+      - alert: ContextFabricNotReady
+        expr: context_fabric_ready == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Context Fabric serve not ready"
+          description: "GET /health/ready has been failing for >5m. See docs/operations/runbooks/ready-false.md"
+
+      - alert: ContextFabricStartupStuck
+        expr: context_fabric_startup_complete == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Context Fabric startup probe stuck"
+          description: "Startup probe has not succeeded for >10m after deploy."
+
+  - name: context-fabric.authz
+    rules:
+      - alert: AuthzOutboxDeadLetters
+        expr: context_fabric_authz_outbox_dead > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AuthZ tuple outbox dead letters"
+          description: "Dead-letter AuthZ tuples detected; ready probe should be false. Run reconcile."
+
+      - alert: AuthzOutboxLagHigh
+        expr: context_fabric_authz_outbox_pending > 100
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "AuthZ outbox backlog"
+          description: "Pending AuthZ tuples exceed threshold; check worker health."
+
+  - name: context-fabric.dependencies
+    rules:
+      - alert: PostgresUnreachable
+        expr: context_fabric_postgres_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL unreachable from serve/worker"
+
+      - alert: OpenFGAUnreachable
+        expr: context_fabric_openfga_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OpenFGA unreachable"
+
+      - alert: NATSJetStreamUnhealthy
+        expr: context_fabric_nats_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NATS/JetStream unhealthy"
+
+  - name: context-fabric.ops
+    rules:
+      - alert: BackupStale
+        expr: (time() - context_fabric_last_successful_backup_timestamp) > 7200
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host-managed backup stale (>2h)"
+          description: "Run scripts/backup.sh per docs/operations/runbooks/backup-restore.md"

@@ -253,6 +253,9 @@ func (s *ApplicationService) RegisterSource(ctx context.Context, creds ports.Cre
 	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return ports.SourceRegistration{}, err
 	}
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
+		return ports.SourceRegistration{}, err
+	}
 	if src.SourceID == "" {
 		src.SourceID = platform.NewEventID()
 	}
@@ -325,7 +328,7 @@ func (s *ApplicationService) VerifySource(ctx context.Context, creds ports.Crede
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	src, err := s.Ledger.GetSource(ctx, orgID, sourceID)
@@ -375,7 +378,7 @@ func (s *ApplicationService) ListSources(ctx context.Context, creds ports.Creden
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	items, err := s.Ledger.ListSources(ctx, orgID)
@@ -393,7 +396,7 @@ func (s *ApplicationService) GetSource(ctx context.Context, creds ports.Credenti
 	if err != nil {
 		return ports.SourceRegistration{}, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return ports.SourceRegistration{}, err
 	}
 	src, err := s.Ledger.GetSource(ctx, orgID, sourceID)
@@ -408,7 +411,7 @@ func (s *ApplicationService) RotateSourceSecret(ctx context.Context, creds ports
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	src, err := s.Ledger.GetSource(ctx, orgID, sourceID)
@@ -483,7 +486,7 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireIngest(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.Quota != nil {
@@ -605,7 +608,7 @@ func (s *ApplicationService) IntakeBatch(ctx context.Context, creds ports.Creden
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireIngest(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	results := make([]map[string]any, 0, len(reqs))
@@ -646,6 +649,9 @@ func (s *ApplicationService) PresignEvidence(ctx context.Context, creds ports.Cr
 	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
+		return nil, err
+	}
 	url, exp, err := s.Evidence.PresignPut(ctx, orgID+"/"+key, ports.PresignOptions{ContentType: contentType, ExpiresIn: 15 * time.Minute})
 	if err != nil {
 		return nil, err
@@ -658,7 +664,7 @@ func (s *ApplicationService) ListChanges(ctx context.Context, creds ports.Creden
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireRead(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed != nil {
@@ -683,7 +689,7 @@ func (s *ApplicationService) ManageWebhooks(ctx context.Context, creds ports.Cre
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed == nil {
@@ -722,7 +728,7 @@ func (s *ApplicationService) ListWebhooks(ctx context.Context, creds ports.Crede
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed == nil {
@@ -736,7 +742,7 @@ func (s *ApplicationService) GetWebhook(ctx context.Context, creds ports.Credent
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed == nil {
@@ -754,7 +760,7 @@ func (s *ApplicationService) ListDeliveries(ctx context.Context, creds ports.Cre
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.ChangeFeed == nil {
@@ -769,6 +775,9 @@ func (s *ApplicationService) StartExport(ctx context.Context, creds ports.Creden
 		return nil, err
 	}
 	if err := platform.RequireOrg(principal, orgID); err != nil {
+		return nil, err
+	}
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.Quota != nil {
@@ -802,7 +811,7 @@ func (s *ApplicationService) GetExport(ctx context.Context, creds ports.Credenti
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.ExportJobs == nil {
@@ -822,7 +831,7 @@ func (s *ApplicationService) ImportExport(ctx context.Context, creds ports.Crede
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, targetOrgID); err != nil {
+	if err := s.requireManage(ctx, principal, targetOrgID, nil); err != nil {
 		return nil, err
 	}
 	if s.Export == nil {
@@ -860,6 +869,9 @@ func (s *ApplicationService) DeleteResource(ctx context.Context, creds ports.Cre
 	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
+		return nil, err
+	}
 	if s.Deletion == nil {
 		return nil, platform.ErrUnavailable("deletion service not configured")
 	}
@@ -877,7 +889,7 @@ func (s *ApplicationService) GetAudit(ctx context.Context, creds ports.Credentia
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireAuditRead(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.Extras == nil {
@@ -895,7 +907,7 @@ func (s *ApplicationService) DiagnoseDecision(ctx context.Context, creds ports.C
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireAuditRead(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	dec, err := s.Authz.Check(ctx, ports.AuthzCheck{
@@ -923,7 +935,7 @@ func (s *ApplicationService) DiagnoseByAuditID(ctx context.Context, creds ports.
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireAuditRead(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.Extras == nil {
@@ -959,7 +971,7 @@ func (s *ApplicationService) GetQuotas(ctx context.Context, creds ports.Credenti
 	if err != nil {
 		return ports.Quota{}, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return ports.Quota{}, err
 	}
 	if s.Quotas == nil {
@@ -973,7 +985,7 @@ func (s *ApplicationService) SetQuotas(ctx context.Context, creds ports.Credenti
 	if err != nil {
 		return ports.Quota{}, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return ports.Quota{}, err
 	}
 	if s.Quotas == nil {
@@ -993,6 +1005,9 @@ func (s *ApplicationService) Bootstrap(ctx context.Context, creds ports.Credenti
 	if err := platform.RequireOrg(principal, orgID); err != nil {
 		return nil, err
 	}
+	if err := s.requireOrgBootstrap(ctx, creds, principal, orgID, nil); err != nil {
+		return nil, err
+	}
 	org := ports.Organization{ID: orgID, Name: name, CreatedAt: time.Now().UTC()}
 	if err := s.Ledger.CreateOrganization(ctx, org); err != nil {
 		if !platform.IsAPIError(err) {
@@ -1008,7 +1023,7 @@ func (s *ApplicationService) OrgStatus(ctx context.Context, creds ports.Credenti
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireRead(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	org, err := s.Ledger.GetOrganization(ctx, orgID)
@@ -1028,7 +1043,7 @@ func (s *ApplicationService) CreateAgent(ctx context.Context, creds ports.Creden
 	if err != nil {
 		return ports.AgentCredential{}, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return ports.AgentCredential{}, err
 	}
 	if s.Credentials == nil {
@@ -1046,7 +1061,7 @@ func (s *ApplicationService) RotateAgent(ctx context.Context, creds ports.Creden
 	if err != nil {
 		return ports.AgentCredential{}, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return ports.AgentCredential{}, err
 	}
 	if s.Credentials == nil {
@@ -1065,7 +1080,7 @@ func (s *ApplicationService) RevokeAgent(ctx context.Context, creds ports.Creden
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	if s.Credentials == nil {
@@ -1082,7 +1097,7 @@ func (s *ApplicationService) OpsLag(ctx context.Context, creds ports.Credentials
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	pending, err := s.Ledger.ListOutboxPending(ctx, orgID, 1000)
@@ -1115,7 +1130,7 @@ func (s *ApplicationService) SupportBundle(ctx context.Context, creds ports.Cred
 	if err != nil {
 		return nil, err
 	}
-	if err := platform.RequireOrg(principal, orgID); err != nil {
+	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
 	v := s.Version()

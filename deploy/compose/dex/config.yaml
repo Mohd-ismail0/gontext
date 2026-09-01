@@ -1,0 +1,19 @@
+issuer: http://dex:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+staticClients:
+  - id: context-fabric-starter
+    secret: integration-dex-secret
+    name: Context Fabric Starter
+    redirectURIs:
+      - http://localhost/callback
+enablePasswordDB: true
+staticPasswords:
+  - email: alice@example.com
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzGfvRKNY8O6CkmW8cW6
+    username: alice
+    userID: alice
+    groups:
+      - admins

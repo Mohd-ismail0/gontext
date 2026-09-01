@@ -2,9 +2,9 @@
 
 Self-hosted, multi-tenant **organizational context plane** for governed intake, provenance, and employee/agent retrieval over REST and MCP. One signed multi-architecture Go image; packaging profiles do not fork authorization or canonical semantics.
 
-## Quickstart (memory / local)
+## Quickstart (demo / memory)
 
-Fastest path for development — no Postgres, OpenFGA, or Compose required:
+Fastest path for **development** — no Postgres, OpenFGA, or Compose required:
 
 ```bash
 make build
@@ -19,11 +19,11 @@ export CONTEXT_FABRIC_URL=http://127.0.0.1:8080
 export CONTEXT_FABRIC_TOKEN=local:org1:alice:admin
 ```
 
-## Compose (bundled deps)
+## Compose
 
-Requires Docker. Prefer memory quickstart first; Compose brings Postgres, MinIO, NATS, and OpenFGA.
+### Demo (local bundled deps)
 
-**Index:** starter/xsama/scaled (and Compose) set `INDEX_BACKEND=postgres` so search projections and the AuthZ tuple outbox share Postgres. Role `all` remains the default single process; split `serve`/`worker` is supported once `INDEX_BACKEND=postgres` is set. Demo profile keeps Local auth + memory OpenFGA; starter/xsama/scaled require real OIDC and OpenFGA (fail-closed).
+Requires Docker. Uses `PROFILE=demo`, role `all`, Local auth, and publishes **:8080** directly.
 
 ```bash
 cp deploy/compose/.env.example deploy/compose/.env
@@ -35,11 +35,28 @@ make compose-up
 docker compose -f deploy/compose/docker-compose.minimal.yaml --env-file deploy/compose/.env up --build
 ```
 
-Public surface: **serve/`all` only** on port `8080` (`/health/live`, `/health/startup`, `/health/ready`, `/v1/system/version`). Postgres, MinIO, NATS, and OpenFGA stay on the private Compose network.
+### Production starter (split serve/worker + OIDC)
+
+For homelab/production on a single host: bundled Postgres/MinIO/NATS/OpenFGA, **external OIDC**, Caddy TLS on **80/443 only**, `INDEX_BACKEND=postgres`, no `all` role.
+
+```bash
+cp deploy/compose/.env.starter.example deploy/compose/.env.starter
+# replace all placeholders; configure your IdP
+
+make compose-starter-preflight
+make compose-starter-up
+```
+
+Runbook: [`docs/operations/deploy-starter-compose.md`](docs/operations/deploy-starter-compose.md).  
+Published image: `ghcr.io/mohd-ismail0/gontext` (pin digest in production).
+
+**Index:** starter/xsama/scaled set `INDEX_BACKEND=postgres` so search projections and the AuthZ tuple outbox share Postgres. Demo keeps Local auth + memory OpenFGA; starter/xsama/scaled require real OIDC and OpenFGA (fail-closed).
 
 Ready probes assert pinned OpenFGA model, `RelationshipWriter`, AuthZ outbox health (no dead letters), and migrations including `004_authz_tuple_outbox`.
 
-Useful targets: `make build`, `make test`, `make lint`, `make migrate`, `make doctor`.
+Useful targets: `make build`, `make test`, `make lint`, `make migrate`, `make doctor`, `make compose-starter-up`, `make release-check`.
+
+Production starter deploy: see [`docs/operations/deploy-starter-compose.md`](docs/operations/deploy-starter-compose.md).
 
 ## cf CLI
 
@@ -80,8 +97,8 @@ MCP is mounted at `POST /mcp` with the same bearer auth; OAuth protected-resourc
 One-shot roles (`migrate`, `bootstrap`, `doctor`, `backup`, `restore`, `reconcile`, `connector`) always honor argv and ignore `CONTEXT_FABRIC_ROLE`. Long-running `serve`/`worker`/`all` still prefer the env var when set (Kubernetes).
 
 ```bash
-docker run --rm ghcr.io/xsama/context-fabric:1.0.0 all
-docker run --rm ghcr.io/xsama/context-fabric:1.0.0 migrate
+docker run --rm ghcr.io/mohd-ismail0/gontext:1.0.0 all
+docker run --rm ghcr.io/mohd-ismail0/gontext:1.0.0 migrate
 ```
 
 ## Profiles
@@ -90,8 +107,8 @@ Concrete configs under [`deploy/profiles/`](deploy/profiles/) (`demo`, `starter`
 
 | Profile | Packaging |
 |---------|-----------|
-| `demo` | Bundled deps, role `all`; Local auth + memory OpenFGA OK |
-| `starter` | Compose bundled PG/NATS/MinIO/OpenFGA; external OIDC (fail-closed) |
+| `demo` | Bundled deps, role `all`; Local auth + memory OpenFGA OK — **not for production** |
+| `starter` | Compose bundled PG/NATS/MinIO/OpenFGA; split serve/worker; external OIDC (fail-closed) |
 | `xsama` | Coolify + private LXCs; public serve only — see [`deploy/coolify/README.md`](deploy/coolify/README.md) |
 | `scaled` | Helm, external deps; use role `all` until durable index |
 

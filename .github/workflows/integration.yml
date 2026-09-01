@@ -1,0 +1,83 @@
+name: integration
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare starter env (Dex OIDC for CI)
+        run: |
+          cp deploy/compose/.env.starter.example deploy/compose/.env.starter
+          sed -i 's|OIDC_ISSUER=.*|OIDC_ISSUER=http://dex:5556/dex|' deploy/compose/.env.starter
+          sed -i 's|OIDC_DISCOVERY_URL=.*|OIDC_DISCOVERY_URL=http://dex:5556/dex/.well-known/openid-configuration|' deploy/compose/.env.starter
+          sed -i 's|OIDC_JWKS_URL=.*|OIDC_JWKS_URL=http://dex:5556/dex/keys|' deploy/compose/.env.starter
+          sed -i 's|OIDC_CLIENT_SECRET=.*|OIDC_CLIENT_SECRET=integration-dex-secret|' deploy/compose/.env.starter
+          sed -i 's|PUBLIC_DOMAIN=.*|PUBLIC_DOMAIN=localhost|' deploy/compose/.env.starter
+          sed -i 's|change-me-postgres-admin|ci-postgres-admin|g' deploy/compose/.env.starter
+          sed -i 's|change-me-postgres-gateway|ci-postgres-gateway|g' deploy/compose/.env.starter
+          sed -i 's|change-me-minio-secret|ci-minio-secret|g' deploy/compose/.env.starter
+          sed -i 's|change-me-nats-password|ci-nats-password|g' deploy/compose/.env.starter
+          sed -i 's|change-me-openfga-preshared-token|ci-openfga-token|g' deploy/compose/.env.starter
+          sed -i 's|change-me-webhook-signing-secret|ci-webhook-signing-secret|g' deploy/compose/.env.starter
+          sed -i 's|change-me-deletion-signing-secret|ci-deletion-signing-secret|g' deploy/compose/.env.starter
+          sed -i 's|idp.example.com|dex:5556/dex|g' deploy/compose/.env.starter || true
+
+      - name: Compose starter smoke (Dex overlay)
+        env:
+          COMPOSE_TEST_OVERLAY: deploy/compose/docker-compose.test.yaml
+          DEX_TOKEN_URL: http://localhost:5556/dex/token
+          DEX_USERNAME: alice@example.com
+          DEX_PASSWORD: password
+          DEX_CLIENT_ID: context-fabric-starter
+          DEX_CLIENT_SECRET: integration-dex-secret
+          SMOKE_BASE_URL: http://localhost:8080
+        run: |
+          chmod +x scripts/compose-smoke.sh scripts/compose-starter-preflight.sh
+          # CI uses non-placeholder secrets; skip strict preflight placeholder checks
+          CONTEXT_FABRIC_ALLOW_STUB_OPS=1 bash scripts/compose-smoke.sh
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker compose -f deploy/compose/docker-compose.yml \
+            -f deploy/compose/docker-compose.starter.yaml \
+            -f deploy/compose/docker-compose.test.yaml \
+            --env-file deploy/compose/.env.starter logs --tail=200
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Helm lint
+        run: helm lint deploy/helm/context-fabric
+      - name: Helm template render
+        run: helm template cf deploy/helm/context-fabric > /tmp/rendered.yaml
+
+  unit-integration:
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      - name: Integration-tagged tests (if present)
+        run: |
+          if go test -list . ./... 2>/dev/null | grep -q integration; then
+            go test -tags=integration -count=1 ./...
+          else
+            echo "no integration-tagged tests; running conformance in-process"
+            go test -count=1 ./internal/conformance/...
+          fi

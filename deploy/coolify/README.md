@@ -4,6 +4,17 @@ Context Fabric on Coolify uses the **same signed image** as Compose/Helm. Roles 
 
 Profile source of truth: [`../profiles/xsama.yaml`](../profiles/xsama.yaml) (ADR 0002 / 0003).
 
+## Image promotion (digest-first)
+
+Production Coolify apps must pin the **same immutable digest** published by the Compose starter release pipeline — not a floating `:latest` tag.
+
+1. Tag a release (`v1.0.0`) and wait for [`.github/workflows/release.yml`](../../.github/workflows/release.yml) to push `ghcr.io/mohd-ismail0/gontext` (multi-arch amd64/arm64).
+2. Verify cosign signature and SBOM artifact for that digest ([release gates](../../docs/operations/release-gates.md) P0-8).
+3. Set the Coolify image reference to `ghcr.io/mohd-ismail0/gontext@sha256:<digest>` for **serve**, **worker**, **connector**, and one-shot jobs (`migrate`, `bootstrap`, `doctor`).
+4. Record the digest in change control; semver tags are pointers only.
+
+Compose starter GA precedes Coolify promotion (ADR 0016). Do not promote a digest that failed `make compose-starter-smoke` or integration CI.
+
 ## Topology
 
 | Component | Placement | Exposure |
@@ -51,9 +62,10 @@ bootstrap:  /usr/local/bin/context-fabric bootstrap
 doctor:     /usr/local/bin/context-fabric doctor
 ```
 
-Image: `ghcr.io/xsama/context-fabric:<version>` (multi-arch amd64/arm64, non-root).
+Image: `ghcr.io/mohd-ismail0/gontext@sha256:<digest>` (multi-arch amd64/arm64, non-root). Replace `<digest>` with the release workflow output.
 
 ## Acceptance bar
 
 - Starter/XSAMA install with real OIDC reaches authenticated search without manual SQL, OpenFGA UI clicks, or container shell access.
 - `doctor` is green before the Coolify proxy marks `serve` healthy.
+- Coolify deployment uses the same digest that passed Compose starter smoke and cosign verification.

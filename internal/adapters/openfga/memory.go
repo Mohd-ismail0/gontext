@@ -213,6 +213,11 @@ func (m *Memory) can(object, relation, subject string, visiting map[string]bool)
 		}
 		return false
 	case "can_manage":
+		if strings.HasPrefix(object, "organization:") {
+			return m.has(object, "manager", subject) ||
+				m.has(object, "knowledge_admin", subject) ||
+				m.has(object, "owner", subject)
+		}
 		if m.has(object, "owner", subject) {
 			return true
 		}

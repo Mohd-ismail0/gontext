@@ -32,6 +32,7 @@ func newP1Svc(t *testing.T) (*app.ApplicationService, *memory.Store, string, por
 	_ = store.CreateOrganization(context.Background(), ports.Organization{ID: org, Name: "P1"})
 	authz.AddOrgMember(org, "alice")
 	authz.AddOrgMember(org, "user:alice")
+	authz.Grant("organization:"+org, "manager", "user:alice")
 
 	pipe := &retrieval.Pipeline{
 		Identity: identity, Authz: authz, Policy: policy.New(),

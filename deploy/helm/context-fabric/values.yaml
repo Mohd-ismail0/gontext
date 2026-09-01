@@ -4,7 +4,7 @@
 profile: scaled
 
 image:
-  repository: ghcr.io/xsama/context-fabric
+  repository: ghcr.io/mohd-ismail0/gontext
   tag: "1.0.0"
   pullPolicy: IfNotPresent
   digest: ""
@@ -99,6 +99,7 @@ dependencies:
     gatewayUserKey: gateway-username
     gatewayPasswordKey: gateway-password
     adminPasswordKey: admin-password
+    adminUser: postgres
     bundled:
       enabled: false
       image: pgvector/pgvector:pg16
@@ -152,6 +153,26 @@ network:
   publicSurface:
     - serve
   privateDependencies: true
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: context-fabric.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+networkPolicy:
+  enabled: true
+  allowMetrics: false
+
+secrets:
+  webhookSigning:
+    existingSecret: context-fabric-platform
+    key: webhook-signing-secret
 
 podSecurityContext:
   runAsNonRoot: true

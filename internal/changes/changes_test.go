@@ -48,6 +48,8 @@ func TestWebhookEventHasNoContentFields(t *testing.T) {
 }
 
 func TestWebhookDuplicateAndDLQ(t *testing.T) {
+	t.Setenv("CONTEXT_FABRIC_PROFILE", "demo")
+	// Use a public HTTPS endpoint; loopback is blocked even in demo (SSRF protection).
 	store := memory.NewStore()
 	svc := changes.New(store, []byte("test-secret"))
 	svc.MaxAttempts = 2
@@ -55,7 +57,7 @@ func TestWebhookDuplicateAndDLQ(t *testing.T) {
 	svc.Now = func() time.Time { return clock }
 
 	org := "org_chg_dlq"
-	sub, err := svc.UpsertWebhook(org, "http://127.0.0.1:9/nope", []string{"*"}, "hook-secret")
+	sub, err := svc.UpsertWebhook(org, "https://example.com/nope", []string{"*"}, "hook-secret")
 	if err != nil {
 		t.Fatal(err)
 	}

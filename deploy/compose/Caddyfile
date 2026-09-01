@@ -1,0 +1,15 @@
+# TLS gateway for starter production overlay.
+# Set PUBLIC_DOMAIN and ACME_EMAIL in .env.starter (use localhost / internal CA for lab).
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN:localhost} {
+	encode gzip zstd
+	reverse_proxy serve:8080 {
+		health_uri /health/ready
+		health_interval 10s
+		health_timeout 5s
+	}
+}

@@ -1,6 +1,6 @@
-# Context Fabric — demo/starter Compose stack
-# Only the serve role publishes a host port (8080). All dependencies stay on the private network.
-# Copy .env.example to .env and adjust before `docker compose up`.
+# Context Fabric — demo Compose stack (default: PROFILE=demo, role=all on :8080).
+# For production starter (split serve/worker, Caddy :443, OIDC): use docker-compose.starter.yaml overlay.
+# Copy .env.example to .env and adjust before `make compose-up` or `docker compose up`.
 
 name: context-fabric
 
@@ -12,6 +12,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_GATEWAY_PASSWORD: ${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../postgres/init:/docker-entrypoint-initdb.d:ro
@@ -141,7 +142,7 @@ services:
       - "8081"
 
   migrate:
-    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -161,12 +162,10 @@ services:
       - private
     restart: "no"
 
-  # Default role=all with durable INDEX_BACKEND=postgres so AuthZ outbox + index projection share Postgres.
-  # Split serve/worker is supported when INDEX_BACKEND=postgres (uncomment worker below).
-  # Default PROFILE=demo for local compose (Local auth + memory OpenFGA).
-  # For starter/OIDC: set CONTEXT_FABRIC_PROFILE=starter, run bootstrap, pin OPENFGA_STORE_ID.
+  # Demo default: role=all + PROFILE=demo (Local auth + memory OpenFGA) on host :8080.
+  # Production starter: overlay docker-compose.starter.yaml (split serve/worker, Caddy :443, OIDC).
   serve:
-    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -211,7 +210,7 @@ services:
       start_period: 30s
 
   bootstrap:
-    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+    image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -244,7 +243,7 @@ services:
   # Optional split worker when INDEX_BACKEND=postgres (AuthZ outbox + index projection).
   # Do not enable alongside in-memory index — projections would not be shared with serve.
   # worker:
-  #   image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/xsama/context-fabric:1.0.0}
+  #   image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
   #   build:
   #     context: ../..
   #     dockerfile: Dockerfile

@@ -16,7 +16,7 @@ roles:
   - restore
   - reconcile
 image:
-  repository: ghcr.io/xsama/context-fabric
+  repository: ghcr.io/mohd-ismail0/gontext
   tag: "1.0.0"
   pullPolicy: IfNotPresent
 network:

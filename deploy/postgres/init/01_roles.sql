@@ -9,8 +9,8 @@ SELECT current_user;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'context_gateway') THEN
-    -- Default password matches deploy/compose/.env.example POSTGRES_GATEWAY_PASSWORD.
-    -- Operators must rotate before any non-demo use; doctor checks NOBYPASSRLS and FORCE RLS.
+    -- Default password is set by deploy/postgres/init/02_gateway_password.sh from
+    -- POSTGRES_GATEWAY_PASSWORD (must match deploy/compose/.env.example and app POSTGRES_DSN).
     CREATE ROLE context_gateway
       LOGIN
       NOSUPERUSER

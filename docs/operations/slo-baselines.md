@@ -26,6 +26,32 @@ architecture diagrams alone.
 | Restore RTO | Time from restore start until ready + tombstone replay verified | TBD after staging soak | TBD after staging soak |
 | Onboarding duration | Time for a new org from bootstrap to first successful authorized search | TBD after staging soak | TBD after staging soak |
 
+## 72h soak worksheet (fill after staging run)
+
+Record observations once per 4h window during a continuous 72h load test on the
+target profile. Leave cells as `TBD` until the soak completes.
+
+| Window (UTC) | Search p95 (ms) | Graph p95 (ms) | AuthZ batch p95 (ms) | Outbox max pending | Webhook success % | Notes |
+|--------------|-----------------|----------------|----------------------|--------------------|-------------------|-------|
+| 0–4h         | TBD             | TBD            | TBD                  | TBD                | TBD               |       |
+| 4–8h         | TBD             | TBD            | TBD                  | TBD                | TBD               |       |
+| 8–12h        | TBD             | TBD            | TBD                  | TBD                | TBD               |       |
+| 12–24h       | TBD             | TBD            | TBD                  | TBD                | TBD               |       |
+| 24–48h       | TBD             | TBD            | TBD                  | TBD                | TBD               |       |
+| 48–72h       | TBD             | TBD            | TBD                  | TBD                | TBD               |       |
+
+### Soak summary (post-run)
+
+| Aggregate | Staging value | Proposed production SLO | Alert threshold |
+|-----------|---------------|-------------------------|-----------------|
+| Search p95 | TBD | TBD | TBD |
+| Graph p95 | TBD | TBD | TBD |
+| Revocation visibility p99 | TBD | TBD | TBD |
+| Deletion time-to-zero p99 | TBD | TBD | TBD |
+| Outbox pending steady-state max | TBD | TBD | TBD |
+| Restore RPO (drill) | TBD | ≤30m | n/a |
+| Restore RTO (drill) | TBD | ≤60m | n/a |
+
 ## Measurement plan
 
 Until the 72h soak fills the table above, collect and trend these signals
@@ -38,6 +64,10 @@ Until the 72h soak fills the table above, collect and trend these signals
 | `context_fabric_graph_requests` | `/metrics` | Graph hop load vs search |
 | `context_fabric_outbox_pending` | `/metrics` | AuthZ outbox backlog / lag |
 | `context_fabric_webhook_deliveries` | `/metrics` | Change-notification delivery health |
+| `context_fabric_http_requests_total{route_class,status_class}` | `/metrics` | Request volume and status mix |
+| `context_fabric_http_errors_total{route_class,error_class}` | `/metrics` | Client/server error rates |
+| `context_fabric_dependency_latency_ms{dependency}` | `/metrics` | Last observed dependency RTT |
+| `context_fabric_build_info` | `/metrics` | Deployed version/commit verification |
 | Search / graph / brief latency histograms | app logs or future histogram metrics | p95/p99 for capacity SLOs |
 | Revocation visibility samples | staged revoke drills | consistency mode correctness |
 | Deletion time-to-zero samples | delete → retrieval drills | tombstone dominance |

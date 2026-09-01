@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -152,11 +153,15 @@ func (s *Service) UpsertWebhook(orgID string, targetURL string, events []string,
 	if orgID == "" || targetURL == "" {
 		return Subscription{}, platform.ErrValidation("org and target_url required")
 	}
+	if err := ValidateWebhookTarget(targetURL); err != nil {
+		return Subscription{}, platform.ErrValidation(err.Error())
+	}
 	if secret == "" {
-		if len(s.secret) == 0 {
-			return Subscription{}, platform.ErrValidation("webhook signing secret required (set WEBHOOK_SIGNING_SECRET or per-subscription secret)")
+		var err error
+		secret, err = generateSubscriptionSecret()
+		if err != nil {
+			return Subscription{}, platform.ErrUnavailable("webhook secret generation failed")
 		}
-		secret = hex.EncodeToString(s.secret)
 	}
 	id := platform.NewEventID()
 	sub := Subscription{
@@ -179,6 +184,14 @@ func (s *Service) UpsertWebhook(orgID string, targetURL string, events []string,
 	pub := sub
 	pub.Secret = ""
 	return pub, nil
+}
+
+func generateSubscriptionSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 // ListWebhooks returns public subscriptions for an org.

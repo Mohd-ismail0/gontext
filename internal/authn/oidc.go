@@ -50,6 +50,11 @@ type OIDCProvider struct {
 	fetchedAt time.Time
 }
 
+// DefaultHTTPClient returns an HTTP client suitable for OIDC discovery/JWKS fetches.
+func DefaultHTTPClient() *http.Client {
+	return &http.Client{Timeout: 10 * time.Second}
+}
+
 // NewOIDC creates an OIDC identity adapter.
 func NewOIDC(cfg OIDCConfig) *OIDCProvider {
 	if cfg.ClaimSubject == "" {
@@ -72,7 +77,7 @@ func NewOIDC(cfg OIDCConfig) *OIDCProvider {
 	}
 	client := cfg.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = DefaultHTTPClient()
 	}
 	return &OIDCProvider{cfg: cfg, client: client, jwksURL: cfg.JWKSURL}
 }

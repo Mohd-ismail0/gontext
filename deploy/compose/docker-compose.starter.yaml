@@ -1,0 +1,271 @@
+# Context Fabric — starter production overlay.
+# Merges with docker-compose.yml. Requires .env.starter (see .env.starter.example).
+#
+#   docker compose -f docker-compose.yml -f docker-compose.starter.yaml --env-file .env.starter up -d
+#
+# Split serve + worker (no role=all), INDEX_BACKEND=postgres, external OIDC,
+# OpenFGA preshared auth, NATS credentials, Caddy TLS on 80/443 only.
+
+name: gontext-starter
+
+x-starter-app: &starter_app
+  image: ${GONTEXT_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
+  pull_policy: ${GONTEXT_PULL_POLICY:-if_not_present}
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  stop_grace_period: 30s
+  tmpfs:
+    - /tmp
+
+services:
+  postgres:
+    networks: !reset
+      - data
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  minio:
+    networks: !reset
+      - data
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  minio-init:
+    networks: !reset
+      - data
+
+  nats:
+    command:
+      - "--js"
+      - "--sd=/data"
+      - "--http_port=8222"
+      - "--name=gontext-nats"
+      - "--user=${NATS_USER}"
+      - "--pass=${NATS_PASSWORD}"
+    networks: !reset
+      - data
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  openfga-migrate:
+    networks: !reset
+      - data
+
+  openfga:
+    environment:
+      OPENFGA_DATASTORE_ENGINE: postgres
+      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/openfga?sslmode=disable
+      OPENFGA_HTTP_ADDR: 0.0.0.0:8080
+      OPENFGA_GRPC_ADDR: 0.0.0.0:8081
+      OPENFGA_PLAYGROUND_ENABLED: "false"
+      OPENFGA_AUTHN_METHOD: preshared
+      OPENFGA_AUTHN_PRESHARED_KEYS: ${OPENFGA_API_TOKEN}
+    networks: !reset
+      - data
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+
+  migrate:
+    <<: *starter_app
+    env_file: !reset []
+    environment:
+      CONTEXT_FABRIC_ROLE: migrate
+      CONTEXT_FABRIC_PROFILE: starter
+      INDEX_BACKEND: postgres
+      MIGRATIONS_DIR: /migrations
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+    networks: !reset
+      - data
+
+  bootstrap:
+    <<: *starter_app
+    env_file: !reset []
+    environment:
+      CONTEXT_FABRIC_ROLE: bootstrap
+      CONTEXT_FABRIC_PROFILE: starter
+      INDEX_BACKEND: postgres
+      MIGRATIONS_DIR: /migrations
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN}
+      OPENFGA_STORE_ID: ${OPENFGA_STORE_ID}
+      OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
+      OPENFGA_MODEL_PATH: /contracts/openfga/model.fga
+      OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+    networks: !reset
+      - data
+
+  serve:
+    <<: *starter_app
+    command: ["serve"]
+    env_file: !reset []
+    ports: !reset []
+    environment:
+      CONTEXT_FABRIC_ROLE: serve
+      CONTEXT_FABRIC_PROFILE: starter
+      CONTEXT_FABRIC_LISTEN_ADDR: ":8080"
+      CONTEXT_FABRIC_LOG_LEVEL: info
+      INDEX_BACKEND: postgres
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET_RAW: ${S3_BUCKET_RAW}
+      S3_BUCKET_DERIVED: ${S3_BUCKET_DERIVED}
+      S3_BUCKET_QUARANTINE: ${S3_BUCKET_QUARANTINE}
+      NATS_URL: nats://${NATS_USER}:${NATS_PASSWORD}@nats:4222
+      NATS_DOMAIN: ${NATS_DOMAIN}
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN}
+      OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
+      OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET}
+      DELETION_SIGNING_SECRET: ${DELETION_SIGNING_SECRET}
+      CAPABILITY_PGVECTOR: ${CAPABILITY_PGVECTOR:-true}
+      CAPABILITY_JETSTREAM_PERSISTENCE: ${CAPABILITY_JETSTREAM_PERSISTENCE:-true}
+      CAPABILITY_S3_VERSIONING: ${CAPABILITY_S3_VERSIONING:-true}
+      CAPABILITY_S3_OBJECT_LOCK: ${CAPABILITY_S3_OBJECT_LOCK:-true}
+      CAPABILITY_OPENFGA_STORE: ${CAPABILITY_OPENFGA_STORE:-true}
+    networks: !reset
+      - data
+      - gateway
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 45s
+
+  worker:
+    <<: *starter_app
+    command: ["worker"]
+    restart: unless-stopped
+    env_file: !reset []
+    environment:
+      CONTEXT_FABRIC_ROLE: worker
+      CONTEXT_FABRIC_PROFILE: starter
+      INDEX_BACKEND: postgres
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_PATH_STYLE: "true"
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      S3_BUCKET_RAW: ${S3_BUCKET_RAW}
+      S3_BUCKET_DERIVED: ${S3_BUCKET_DERIVED}
+      S3_BUCKET_QUARANTINE: ${S3_BUCKET_QUARANTINE}
+      NATS_URL: nats://${NATS_USER}:${NATS_PASSWORD}@nats:4222
+      NATS_DOMAIN: ${NATS_DOMAIN}
+      OPENFGA_API_URL: http://openfga:8080
+      OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN}
+      OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
+      OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+      CAPABILITY_PGVECTOR: ${CAPABILITY_PGVECTOR:-true}
+      CAPABILITY_JETSTREAM_PERSISTENCE: ${CAPABILITY_JETSTREAM_PERSISTENCE:-true}
+      CAPABILITY_S3_VERSIONING: ${CAPABILITY_S3_VERSIONING:-true}
+      CAPABILITY_S3_OBJECT_LOCK: ${CAPABILITY_S3_OBJECT_LOCK:-true}
+      CAPABILITY_OPENFGA_STORE: ${CAPABILITY_OPENFGA_STORE:-true}
+    volumes:
+      - openfga_bootstrap:/var/run/context-fabric
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      openfga:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      migrate:
+        condition: service_completed_successfully
+      bootstrap:
+        condition: service_completed_successfully
+      serve:
+        condition: service_healthy
+    networks: !reset
+      - data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.25"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/context-fabric", "doctor"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    stop_grace_period: 45s
+
+  caddy:
+    image: caddy:2.8.4-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-ops@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: !reset
+      - gateway
+      - data
+    depends_on:
+      serve:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+networks:
+  data:
+    driver: bridge
+    internal: true
+    name: gontext-starter-data
+  gateway:
+    driver: bridge
+    name: gontext-starter-gateway
+
+volumes:
+  caddy_data:
+  caddy_config:

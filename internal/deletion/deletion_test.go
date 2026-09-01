@@ -60,7 +60,7 @@ func TestTombstoneDominatesSearch(t *testing.T) {
 
 	del := &deletion.Service{
 		Ledger: store, Evidence: memory.NewEvidence(), Index: idx, Authz: authz,
-		Audit: audit.NewMemory(), Changes: store,
+		Audit: audit.NewMemory(), Changes: store, SignKey: []byte("test-signing-key"),
 	}
 	manifest, err := del.Run(ctx, deletion.Request{
 		OrgID: org, ResourceID: rec.ResourceID,
@@ -73,7 +73,7 @@ func TestTombstoneDominatesSearch(t *testing.T) {
 	if manifest.Status != "completed" && manifest.Status != "blocked" {
 		t.Fatalf("unexpected status %s", manifest.Status)
 	}
-	if !deletion.VerifySignature(nil, manifest) {
+	if !deletion.VerifySignature([]byte("test-signing-key"), manifest) {
 		t.Fatal("manifest signature invalid")
 	}
 

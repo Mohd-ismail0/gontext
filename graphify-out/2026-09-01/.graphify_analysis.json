@@ -4022,13 +4022,13 @@
       "degree": 65
     },
     {
-      "id": "postgres_store",
-      "label": "Store",
+      "id": "internal_httpapi_server_go_httpapi_server",
+      "label": "Server",
       "degree": 54
     },
     {
-      "id": "internal_httpapi_server_go_httpapi_server",
-      "label": "Server",
+      "id": "postgres_store",
+      "label": "Store",
       "degree": 54
     },
     {
@@ -4057,8 +4057,8 @@
       "degree": 43
     },
     {
-      "id": "cmd_context_fabric_main_wire",
-      "label": "wire()",
+      "id": "internal_httpapi_server_bearercreds",
+      "label": "bearerCreds()",
       "degree": 38
     }
   ],
@@ -4072,7 +4072,7 @@
       ],
       "confidence": "EXTRACTED",
       "relation": "references",
-      "why": "crosses file types (code \u2194 doc); connects across different repos/directories"
+      "why": "crosses file types (code ↔ doc); connects across different repos/directories"
     },
     {
       "source": "Context Fabric Historical Reference Architecture",
@@ -4087,10 +4087,21 @@
     },
     {
       "source": "wire()",
-      "target": "NewCredentialStore()",
+      "target": "Server",
       "source_files": [
         "cmd/context-fabric/main.go",
-        "internal/adapters/memory/credentials.go"
+        "internal/httpapi/server.go"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "references",
+      "why": "connects across different repos/directories; bridges separate communities"
+    },
+    {
+      "source": "wire()",
+      "target": "New()",
+      "source_files": [
+        "cmd/context-fabric/main.go",
+        "internal/httpapi/server.go"
       ],
       "confidence": "EXTRACTED",
       "relation": "calls",
@@ -4098,29 +4109,51 @@
     },
     {
       "source": "wire()",
-      "target": "NewEvidence()",
+      "target": "NewOIDC()",
       "source_files": [
         "cmd/context-fabric/main.go",
-        "internal/adapters/memory/evidence.go"
-      ],
-      "confidence": "EXTRACTED",
-      "relation": "calls",
-      "why": "connects across different repos/directories; bridges separate communities"
-    },
-    {
-      "source": "wire()",
-      "target": "NewIndex()",
-      "source_files": [
-        "cmd/context-fabric/main.go",
-        "internal/adapters/memory/index.go"
+        "internal/authn/oidc.go"
       ],
       "confidence": "EXTRACTED",
       "relation": "calls",
       "why": "connects across different repos/directories; bridges separate communities"
     }
   ],
-  "tokens": {
-    "input": 112993,
-    "output": 47572
-  }
+  "questions": [
+    {
+      "type": "ambiguous_edge",
+      "question": "What is the exact relationship between `Context Fabric Historical Reference Architecture` and `ADR 0012: V1 Boundaries`?",
+      "why": "Edge tagged AMBIGUOUS (relation: references) - confidence is low."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `organization_id` connect `Source Registration Schema` to `Export Manifest Status`, `Audit Authorization Record`, `Change Event Metadata`, `Resource Provenance Schema`?",
+      "why": "High betweenness centrality (0.083) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `required` connect `Plugin Manifest Schema` to `Service Config Schema`?",
+      "why": "High betweenness centrality (0.081) - this node is a cross-community bridge."
+    },
+    {
+      "type": "bridge_node",
+      "question": "Why does `properties` connect `Plugin Capabilities Schema` to `Container Image Schema`, `Config Schema`, `Persistence Ledger Config`, `Metadata Schema`, `Backup Policy Schema`, `Network Serve Config`, `Demo Deployment Profile`, `Dependencies Schema Field`, `Public Surface Roles`, `Schema Migration Config`?",
+      "why": "High betweenness centrality (0.079) - this node is a cross-community bridge."
+    },
+    {
+      "type": "isolated_nodes",
+      "question": "What connects `AccessRequestBody`, `BriefRequest`, `Citation` to the rest of the system?",
+      "why": "1246 weakly-connected nodes found - possible documentation gaps or missing edges."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `HTTP JSON Handler` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.08015989901115085 - nodes in this community are weakly interconnected."
+    },
+    {
+      "type": "low_cohesion",
+      "question": "Should `Authz Ledger Store` be split into smaller, more focused modules?",
+      "why": "Cohesion score 0.0662004662004662 - nodes in this community are weakly interconnected."
+    }
+  ]
 }

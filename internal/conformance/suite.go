@@ -332,7 +332,7 @@ func runWebhookRetry(ctx context.Context) error {
 	h := newHarness(ctx, "org_wh")
 	feed := changes.New(h.ledger, []byte("wh-secret"))
 	feed.MaxAttempts = 3
-	sub, err := feed.UpsertWebhook(h.org, "http://127.0.0.1:9/hook", []string{"*"}, "hook-secret")
+	sub, err := feed.UpsertWebhook(h.org, "https://example.com/hook", []string{"*"}, "hook-secret")
 	if err != nil {
 		return err
 	}

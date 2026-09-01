@@ -37,5 +37,6 @@ echo "==> doctor"
 ./bin/context-fabric doctor || true
 
 echo "==> done"
-echo "NOTE: if OpenFGA was restored from backup, run this after ledger restore so"
+echo "NOTE: backup/restore are host-managed (scripts/backup.sh, scripts/restore.sh)."
+echo "      If OpenFGA was restored from backup, run this after ledger restore so"
 echo "      sync_authz parent edges re-converge (ADR 0014)."
