@@ -17,12 +17,12 @@ import (
 
 // Server exposes the OpenAPI REST surface over net/http.
 type Server struct {
-	App    *app.ApplicationService
-	Mux    *http.ServeMux
-	ready  bool
+	App     *app.ApplicationService
+	Mux     *http.ServeMux
+	ready   bool
 	started bool
-	MCP    *mcp.Server
-	mw     MiddlewareConfig
+	MCP     *mcp.Server
+	mw      MiddlewareConfig
 }
 
 // New constructs and registers routes.
@@ -274,8 +274,8 @@ func (s *Server) handleBrief(w http.ResponseWriter, r *http.Request) {
 	orgID := r.PathValue("orgId")
 	creds := bearerCreds(r)
 	var body struct {
-		Purpose     string `json:"purpose"`
-		Scope       struct {
+		Purpose string `json:"purpose"`
+		Scope   struct {
 			ResourceID string `json:"resource_id"`
 		} `json:"scope"`
 		MaxItems    int    `json:"max_items"`

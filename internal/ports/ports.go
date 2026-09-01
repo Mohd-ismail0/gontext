@@ -40,21 +40,21 @@ type RelationshipTuple struct {
 
 // AuthzTupleOp is a durable AuthZ outbox operation (ADR 0014).
 type AuthzTupleOp struct {
-	ID         string    `json:"id"`
-	OrgID      string    `json:"organization_id"`
-	Operation  string    `json:"operation"` // write | delete
-	Object     string    `json:"object"`
-	Relation   string    `json:"relation"`
-	Subject    string    `json:"subject"`
-	EdgeID     string    `json:"edge_id,omitempty"`
-	Status     string    `json:"status"` // pending | applied | dead
-	Attempts   int       `json:"attempts"`
-	LastError  string    `json:"last_error,omitempty"`
-	LeaseUntil *time.Time `json:"lease_until,omitempty"`
-	NextAttempt time.Time `json:"next_attempt"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
-	AppliedAt  *time.Time `json:"applied_at,omitempty"`
+	ID          string     `json:"id"`
+	OrgID       string     `json:"organization_id"`
+	Operation   string     `json:"operation"` // write | delete
+	Object      string     `json:"object"`
+	Relation    string     `json:"relation"`
+	Subject     string     `json:"subject"`
+	EdgeID      string     `json:"edge_id,omitempty"`
+	Status      string     `json:"status"` // pending | applied | dead
+	Attempts    int        `json:"attempts"`
+	LastError   string     `json:"last_error,omitempty"`
+	LeaseUntil  *time.Time `json:"lease_until,omitempty"`
+	NextAttempt time.Time  `json:"next_attempt"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	AppliedAt   *time.Time `json:"applied_at,omitempty"`
 }
 
 // PolicyProvider applies deterministic disclosure/redaction/purpose obligations.
@@ -180,9 +180,9 @@ type EdgeListOptions struct {
 
 // Lifecycle states for graph nodes.
 const (
-	LifecycleAccepted   = "ACCEPTED"
-	LifecycleIndexed    = "INDEXED"
+	LifecycleAccepted    = "ACCEPTED"
+	LifecycleIndexed     = "INDEXED"
 	LifecyclePlaceholder = "PLACEHOLDER"
-	LifecycleTombstoned = "TOMBSTONED"
-	LifecycleEnsured    = "ENSURED" // legacy alias; treat as PLACEHOLDER
+	LifecycleTombstoned  = "TOMBSTONED"
+	LifecycleEnsured     = "ENSURED" // legacy alias; treat as PLACEHOLDER
 )

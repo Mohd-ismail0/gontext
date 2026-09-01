@@ -24,12 +24,12 @@ var MappingYAML []byte
 
 // Config for the Chatwoot connector.
 type Config struct {
-	GatewayURL     string
-	OrgID          string
-	SourceID       string
-	SigningSecret  string
-	BearerToken    string
-	HTTPClient     *http.Client
+	GatewayURL    string
+	OrgID         string
+	SourceID      string
+	SigningSecret string
+	BearerToken   string
+	HTTPClient    *http.Client
 }
 
 // Connector posts mapped CloudEvents to the gateway intake API.

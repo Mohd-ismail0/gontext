@@ -8,17 +8,17 @@ import (
 )
 
 var redactedKeys = map[string]struct{}{
-	"password":          {},
-	"secret":            {},
-	"token":             {},
-	"authorization":     {},
-	"api_key":           {},
-	"apikey":            {},
-	"webhook_signing":   {},
-	"deletion_signing":  {},
-	"client_secret":     {},
+	"password":           {},
+	"secret":             {},
+	"token":              {},
+	"authorization":      {},
+	"api_key":            {},
+	"apikey":             {},
+	"webhook_signing":    {},
+	"deletion_signing":   {},
+	"client_secret":      {},
 	"postgres_admin_dsn": {},
-	"dsn":               {},
+	"dsn":                {},
 }
 
 // SetupLogging configures the default slog logger with JSON output, redaction, and LOG_LEVEL.

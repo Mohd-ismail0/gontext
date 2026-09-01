@@ -18,8 +18,8 @@ import (
 	"github.com/xsama/context-fabric/internal/export"
 	"github.com/xsama/context-fabric/internal/ingest"
 	"github.com/xsama/context-fabric/internal/mapping"
-	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/policy"
+	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/retrieval"
 )
 
@@ -97,7 +97,7 @@ func TestE2EMemoryHappyPathAndRevoke(t *testing.T) {
 		System:                "synthetic",
 		Enabled:               true,
 		TrustCeiling:          "trusted_internal",
-		TrustTier:            "trusted_internal",
+		TrustTier:             "trusted_internal",
 		AuthorityCeiling:      "source_of_truth",
 		ClassificationCeiling: "confidential",
 		SigningSecret:         "e2e-signing-secret",

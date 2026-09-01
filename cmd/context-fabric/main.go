@@ -353,7 +353,7 @@ func wire(role string, cfg config.Config) (*app.ApplicationService, *httpapi.Ser
 			s3e, err := newS3Evidence(s3store.RouterConfig{
 				Endpoint: cfg.S3.Endpoint, Region: cfg.S3.Region,
 				AccessKeyID: cfg.S3.AccessKeyID, SecretAccessKey: cfg.S3.SecretAccessKey,
-				PathStyle: cfg.S3.PathStyle,
+				PathStyle:  cfg.S3.PathStyle,
 				Quarantine: cfg.S3.BucketQuarantine, Raw: cfg.S3.BucketRaw, Derived: cfg.S3.BucketDerived,
 			})
 			if err != nil {
@@ -455,7 +455,7 @@ func wire(role string, cfg config.Config) (*app.ApplicationService, *httpapi.Ser
 		if s3e, err := newS3Evidence(s3store.RouterConfig{
 			Endpoint: ep, Region: firstEnv("S3_REGION", "us-east-1"),
 			AccessKeyID: os.Getenv("S3_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-			PathStyle: true,
+			PathStyle:  true,
 			Quarantine: firstEnv("S3_BUCKET_QUARANTINE", "context-quarantine"),
 			Raw:        firstEnv("S3_BUCKET_RAW", "context-raw"),
 			Derived:    firstEnv("S3_BUCKET_DERIVED", "context-derived"),
@@ -798,7 +798,7 @@ func runDoctor() error {
 		if rt, err := newS3Evidence(s3store.RouterConfig{
 			Endpoint: ep, Region: firstEnv("S3_REGION", "us-east-1"),
 			AccessKeyID: os.Getenv("S3_ACCESS_KEY_ID"), SecretAccessKey: os.Getenv("S3_SECRET_ACCESS_KEY"),
-			PathStyle: true,
+			PathStyle:  true,
 			Quarantine: firstEnv("S3_BUCKET_QUARANTINE", "context-quarantine"),
 			Raw:        firstEnv("S3_BUCKET_RAW", "context-raw"),
 			Derived:    firstEnv("S3_BUCKET_DERIVED", "context-derived"),

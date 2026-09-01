@@ -127,7 +127,7 @@ func (c *Client) batchCheckNative(ctx context.Context, reqs []ports.AuthzCheck) 
 	}
 	var resp struct {
 		Result map[string]struct {
-			Allowed bool   `json:"allowed"`
+			Allowed bool `json:"allowed"`
 			Error   *struct {
 				Message string `json:"message"`
 			} `json:"error,omitempty"`
@@ -271,7 +271,7 @@ func (c *Client) mutateTuples(ctx context.Context, tuples []ports.RelationshipTu
 		} else {
 			payload = map[string]any{
 				"authorization_model_id": c.ModelID,
-				"writes":                map[string]any{"tuple_keys": keys},
+				"writes":                 map[string]any{"tuple_keys": keys},
 			}
 		}
 		if err := c.postJSON(ctx, fmt.Sprintf("/stores/%s/write", c.StoreID), payload, nil); err != nil {

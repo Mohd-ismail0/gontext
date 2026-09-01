@@ -342,13 +342,13 @@ func (s *ApplicationService) VerifySource(ctx context.Context, creds ports.Crede
 	checkedAt := time.Now().UTC()
 	if secret == "" {
 		return map[string]any{
-			"source_id":  src.SourceID,
-			"system":     src.System,
-			"enabled":    src.Enabled,
-			"status":     "failed",
+			"source_id":   src.SourceID,
+			"system":      src.System,
+			"enabled":     src.Enabled,
+			"status":      "failed",
 			"reason_code": "missing_signing_secret",
-			"detail":     "signing_secret is empty",
-			"checked_at": checkedAt,
+			"detail":      "signing_secret is empty",
+			"checked_at":  checkedAt,
 		}, nil
 	}
 	probe := []byte("context-fabric-verify-probe")
@@ -635,9 +635,9 @@ func (s *ApplicationService) IntakeBatch(ctx context.Context, creds ports.Creden
 		results = append(results, out)
 	}
 	return map[string]any{
-		"results":         results,
-		"accepted_count":  accepted,
-		"rejected_count":  rejected,
+		"results":        results,
+		"accepted_count": accepted,
+		"rejected_count": rejected,
 	}, nil
 }
 

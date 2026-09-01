@@ -23,10 +23,10 @@ const (
 	SchemaVersion  = "context-fabric.change/v1"
 	ProfileVersion = "context-fabric.profile/v1"
 
-	StatusPending           = "pending"
-	StatusDelivered         = "delivered"
-	StatusDuplicateIgnored  = "duplicate_ignored"
-	StatusDead              = "dead"
+	StatusPending          = "pending"
+	StatusDelivered        = "delivered"
+	StatusDuplicateIgnored = "duplicate_ignored"
+	StatusDead             = "dead"
 )
 
 // FeedStore persists change events and webhook registrations.
@@ -87,15 +87,15 @@ type PublicEvent struct {
 
 // Service owns cursor listing, signing, delivery attempts, and replay.
 type Service struct {
-	Feed         FeedStore
-	Durable      Durability // optional Postgres-backed webhook state
-	mu           sync.RWMutex
-	subs         map[string]map[string]Subscription // org -> id -> sub
-	deliv        map[string][]DeliveryAttempt       // org -> attempts
-	secret       []byte
+	Feed          FeedStore
+	Durable       Durability // optional Postgres-backed webhook state
+	mu            sync.RWMutex
+	subs          map[string]map[string]Subscription // org -> id -> sub
+	deliv         map[string][]DeliveryAttempt       // org -> attempts
+	secret        []byte
 	RequireSecret bool // when true, empty constructor secret is rejected at runtime
-	MaxAttempts  int // dead-letter after this many failed pushes (default 8)
-	Now          func() time.Time
+	MaxAttempts   int  // dead-letter after this many failed pushes (default 8)
+	Now           func() time.Time
 }
 
 // New creates a change-feed service. webhookSecret signs delivery bodies.

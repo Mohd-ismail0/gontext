@@ -384,9 +384,9 @@
     "semantic_hash": ""
   },
   "internal/config/config.go": {
-    "mtime": 1788272997.1783614,
-    "seen": 1788272997.851966,
-    "ast_hash": "3d9d7c96cda0fb73c1a4473b0e3ecd22",
+    "mtime": 1788272998.796627,
+    "seen": 1788273059.149937,
+    "ast_hash": "6c275853688d81f9b4bc864b936c00cf",
     "semantic_hash": ""
   },
   "internal/conformance/remote.go": {
@@ -408,10 +408,10 @@
     "semantic_hash": "a830d512e0143518889dde175ef1f48d"
   },
   "internal/conformance/suite.go": {
-    "mtime": 1787571876.347732,
-    "seen": 1788272254.4933352,
-    "ast_hash": "435bb03d82d5f0e7c60132a74a12c200",
-    "semantic_hash": "435bb03d82d5f0e7c60132a74a12c200"
+    "mtime": 1788272998.4903512,
+    "seen": 1788273059.150935,
+    "ast_hash": "da2947b35d3454566bc9a47e49d82685",
+    "semantic_hash": ""
   },
   "internal/conformance/suite_mcp.go": {
     "mtime": 1787571702.5201895,
@@ -714,15 +714,15 @@
     "semantic_hash": "2ae0f369b96e4eed29a056e70c02dc52"
   },
   "deploy/compose/docker-compose.minimal.yaml": {
-    "mtime": 1788272801.6533988,
-    "seen": 1788272871.7202053,
-    "ast_hash": "27895d0665407fe66733da8e76db77af",
+    "mtime": 1788273042.2376983,
+    "seen": 1788273059.16283,
+    "ast_hash": "e4f99083030975d246aba45b6b866628",
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.yml": {
-    "mtime": 1788272812.0668292,
-    "seen": 1788272871.7202053,
-    "ast_hash": "96df19d5606f480abea58f3868beab99",
+    "mtime": 1788273039.6519837,
+    "seen": 1788273059.163931,
+    "ast_hash": "fbe8c8c6b913b14a557e4cb93cb02432",
     "semantic_hash": ""
   },
   "deploy/coolify/README.md": {
@@ -1218,9 +1218,15 @@
     "semantic_hash": ""
   },
   "internal/httpapi/middleware_test.go": {
-    "mtime": 1788272951.009079,
-    "seen": 1788272997.8529663,
-    "ast_hash": "01aaba90c5f23c4618da44d6a8282635",
+    "mtime": 1788273044.4345782,
+    "seen": 1788273059.1529317,
+    "ast_hash": "ce240960b4444cb43ec1213c1a7f3d8b",
+    "semantic_hash": ""
+  },
+  "deploy/postgres/init/02_gateway_password.sh": {
+    "mtime": 1788273037.8027325,
+    "seen": 1788273059.140831,
+    "ast_hash": "7a6450b553b0abd37d71d2b949d8b9e4",
     "semantic_hash": ""
   }
 }

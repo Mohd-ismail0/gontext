@@ -39,9 +39,9 @@ func (p Profile) IsProduction() bool {
 // Config is runtime configuration loaded from environment variables.
 type Config struct {
 	Profile           Profile
-	ListenAddr   string
-	LogLevel     string
-	AuthzModelID string
+	ListenAddr        string
+	LogLevel          string
+	AuthzModelID      string
 	MetricsListenAddr string
 
 	Secrets Secrets
@@ -57,12 +57,12 @@ type Config struct {
 
 // Secrets holds classified values loaded from env or *_FILE paths.
 type Secrets struct {
-	WebhookSigningSecret  string
-	DeletionSigningSecret string
+	WebhookSigningSecret   string
+	DeletionSigningSecret  string
 	PlatformBootstrapToken string
-	PostgresAdminDSN      string
-	GatewayPassword       string
-	GatewayPasswordFile   string
+	PostgresAdminDSN       string
+	GatewayPassword        string
+	GatewayPasswordFile    string
 }
 
 // Runtime holds process-level toggles and server tuning.

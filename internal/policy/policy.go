@@ -21,11 +21,11 @@ var classificationRank = map[string]int{
 // Provider is a deterministic Go PolicyProvider.
 // It never grants AuthZ access—only purpose/classification obligations after allow.
 type Provider struct {
-	AllowedPurposes      map[string]struct{}
-	MaxClassification    string
-	DefaultMaxResults    int
-	ConfidentialRedact   string
-	PublicRedact         string
+	AllowedPurposes    map[string]struct{}
+	MaxClassification  string
+	DefaultMaxResults  int
+	ConfidentialRedact string
+	PublicRedact       string
 }
 
 // New returns a Provider with sensible v1 defaults.

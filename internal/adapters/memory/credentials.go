@@ -21,12 +21,12 @@ type CredentialStore struct {
 }
 
 type agentCred struct {
-	meta   ports.AgentCredential
-	hash   string
-	orgID  string
-	owner  string
+	meta    ports.AgentCredential
+	hash    string
+	orgID   string
+	owner   string
 	revoked bool
-	agent  ports.AgentPrincipal
+	agent   ports.AgentPrincipal
 }
 
 // NewCredentialStore creates an empty credential store.

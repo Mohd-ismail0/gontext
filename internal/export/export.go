@@ -48,13 +48,13 @@ type Manifest struct {
 	Contents       []ContentEntry    `json:"contents"`
 	SchemaVersions map[string]string `json:"schema_versions,omitempty"`
 	// Embedded payloads for memory/demo round-trip (never include secrets).
-	Records     []ports.Record             `json:"records,omitempty"`
-	Revisions   []ports.Revision           `json:"revisions,omitempty"`
-	Sources     []ports.SourceRegistration `json:"sources,omitempty"`
-	Tombstones  []Tombstone                `json:"tombstones,omitempty"`
-	GraphEdges  []ports.GraphEdge          `json:"graph_edges,omitempty"`
-	AuthzTuples []AuthzTupleManifest       `json:"authz_tuples,omitempty"`
-	EvidenceRefs []EvidenceRef             `json:"evidence_refs,omitempty"`
+	Records      []ports.Record             `json:"records,omitempty"`
+	Revisions    []ports.Revision           `json:"revisions,omitempty"`
+	Sources      []ports.SourceRegistration `json:"sources,omitempty"`
+	Tombstones   []Tombstone                `json:"tombstones,omitempty"`
+	GraphEdges   []ports.GraphEdge          `json:"graph_edges,omitempty"`
+	AuthzTuples  []AuthzTupleManifest       `json:"authz_tuples,omitempty"`
+	EvidenceRefs []EvidenceRef              `json:"evidence_refs,omitempty"`
 }
 
 // EvidenceRef is a portable pointer to an evidence object (no secret material).

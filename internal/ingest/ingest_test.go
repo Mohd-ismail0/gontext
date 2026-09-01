@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/adapters/memory"
 	"github.com/xsama/context-fabric/internal/adapters/openfga"
+	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/ingest"
 	"github.com/xsama/context-fabric/internal/mapping"
 	"github.com/xsama/context-fabric/internal/platform"
@@ -27,7 +27,7 @@ func setup(t *testing.T) (*ingest.IntakeService, *memory.Store, ports.SourceRegi
 		System:                "chatwoot",
 		Enabled:               true,
 		TrustCeiling:          "trusted_internal",
-		TrustTier:            "trusted_internal",
+		TrustTier:             "trusted_internal",
 		AuthorityCeiling:      "source_of_truth",
 		ClassificationCeiling: "confidential",
 		SigningSecret:         "super-secret",

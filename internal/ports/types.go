@@ -57,8 +57,8 @@ type DelegationGrant struct {
 type ConsistencyMode string
 
 const (
-	ConsistencyMinLatency       ConsistencyMode = "min_latency"
-	ConsistencyFullyConsistent  ConsistencyMode = "fully_consistent"
+	ConsistencyMinLatency      ConsistencyMode = "min_latency"
+	ConsistencyFullyConsistent ConsistencyMode = "fully_consistent"
 )
 
 // Credentials wraps authentication material for IdentityProvider.
@@ -80,21 +80,21 @@ type OIDCMetadata struct {
 
 // AuthzCheck is a single relationship authorization request.
 type AuthzCheck struct {
-	Principal   Principal       `json:"principal"`
-	Action      string          `json:"action"`
-	ResourceID  string          `json:"resource_id"`
-	Consistency ConsistencyMode `json:"consistency"`
-	Context     map[string]any  `json:"context,omitempty"`
+	Principal   Principal        `json:"principal"`
+	Action      string           `json:"action"`
+	ResourceID  string           `json:"resource_id"`
+	Consistency ConsistencyMode  `json:"consistency"`
+	Context     map[string]any   `json:"context,omitempty"`
 	Delegation  *DelegationGrant `json:"delegation,omitempty"`
 }
 
 // AuthzDecision is the AuthZ allow/deny outcome (not disclosure policy).
 type AuthzDecision struct {
-	Allowed        bool            `json:"allowed"`
-	ReasonCode     string          `json:"reason_code,omitempty"`
-	Consistency    ConsistencyMode `json:"consistency"`
-	ModelRevision  string          `json:"model_revision,omitempty"`
-	CheckedAt      time.Time       `json:"checked_at"`
+	Allowed       bool            `json:"allowed"`
+	ReasonCode    string          `json:"reason_code,omitempty"`
+	Consistency   ConsistencyMode `json:"consistency"`
+	ModelRevision string          `json:"model_revision,omitempty"`
+	CheckedAt     time.Time       `json:"checked_at"`
 }
 
 // ScopeResolve asks AuthZ for a candidate prefilter scope.
@@ -151,16 +151,16 @@ type Record struct {
 
 // Revision is an immutable observed version of a Record.
 type Revision struct {
-	RevisionID   string            `json:"revision_id"`
-	ResourceID   string            `json:"resource_id"`
-	OrgID        string            `json:"org_id"`
-	ContentHash  string            `json:"content_hash,omitempty"`
-	EvidenceRef  string            `json:"evidence_ref,omitempty"`
-	Sequence     int64             `json:"sequence"`
-	State        string            `json:"state"`
-	Attributes   map[string]string `json:"attributes,omitempty"`
-	ObservedAt   time.Time         `json:"observed_at"`
-	CreatedAt    time.Time         `json:"created_at"`
+	RevisionID  string            `json:"revision_id"`
+	ResourceID  string            `json:"resource_id"`
+	OrgID       string            `json:"org_id"`
+	ContentHash string            `json:"content_hash,omitempty"`
+	EvidenceRef string            `json:"evidence_ref,omitempty"`
+	Sequence    int64             `json:"sequence"`
+	State       string            `json:"state"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
+	ObservedAt  time.Time         `json:"observed_at"`
+	CreatedAt   time.Time         `json:"created_at"`
 }
 
 // ContextPacket is a governed retrieval response bundle.
@@ -174,7 +174,7 @@ type ContextPacket struct {
 	Nodes              []GraphNode `json:"nodes,omitempty"`
 	Edges              []GraphEdge `json:"edges,omitempty"`
 	Citations          []Citation  `json:"citations"`
-	Redactions          []Redaction `json:"redactions"`
+	Redactions         []Redaction `json:"redactions"`
 	Summary            string      `json:"summary,omitempty"`
 	PolicyRevision     string      `json:"policy_revision"`
 	AuthzRevision      string      `json:"authz_revision"`
@@ -268,26 +268,26 @@ type IntakeEvent struct {
 
 // SourceRegistration describes a registered source/connector binding.
 type SourceRegistration struct {
-	SourceID               string            `json:"source_id"`
-	OrgID                  string            `json:"organization_id"`
-	System                 string            `json:"system"`
-	DisplayName            string            `json:"display_name,omitempty"`
-	TrustTier             string            `json:"trust_tier,omitempty"`
-	TrustCeiling           string            `json:"trust_ceiling,omitempty"`
-	AuthorityCeiling       string            `json:"authority_ceiling,omitempty"`
-	ClassificationCeiling  string            `json:"classification_ceiling,omitempty"`
-	ClassificationDefault  string            `json:"classification_default,omitempty"`
-	MappingSpec            string            `json:"mapping_spec_id,omitempty"`
+	SourceID              string `json:"source_id"`
+	OrgID                 string `json:"organization_id"`
+	System                string `json:"system"`
+	DisplayName           string `json:"display_name,omitempty"`
+	TrustTier             string `json:"trust_tier,omitempty"`
+	TrustCeiling          string `json:"trust_ceiling,omitempty"`
+	AuthorityCeiling      string `json:"authority_ceiling,omitempty"`
+	ClassificationCeiling string `json:"classification_ceiling,omitempty"`
+	ClassificationDefault string `json:"classification_default,omitempty"`
+	MappingSpec           string `json:"mapping_spec_id,omitempty"`
 	// MappingSpecInline is accepted on register (JSON object); persisted separately.
-	MappingSpecInline      json.RawMessage   `json:"mapping_spec,omitempty"`
-	Enabled                bool              `json:"enabled"`
-	SigningSecret          string            `json:"signing_secret,omitempty"`
-	ReplayWindowSeconds    int               `json:"replay_window_seconds,omitempty"`
-	AllowedRecordTypes     []string          `json:"allowed_record_types,omitempty"`
-	AllowedVisibilityRefs  []string          `json:"allowed_visibility_refs,omitempty"`
-	Attributes             map[string]string `json:"attributes,omitempty"`
-	CreatedAt              time.Time         `json:"created_at"`
-	UpdatedAt              time.Time         `json:"updated_at"`
+	MappingSpecInline     json.RawMessage   `json:"mapping_spec,omitempty"`
+	Enabled               bool              `json:"enabled"`
+	SigningSecret         string            `json:"signing_secret,omitempty"`
+	ReplayWindowSeconds   int               `json:"replay_window_seconds,omitempty"`
+	AllowedRecordTypes    []string          `json:"allowed_record_types,omitempty"`
+	AllowedVisibilityRefs []string          `json:"allowed_visibility_refs,omitempty"`
+	Attributes            map[string]string `json:"attributes,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
 }
 
 // EffectiveTrustCeiling returns the trust ceiling (prefer explicit ceiling).
@@ -455,10 +455,10 @@ type ParseResult struct {
 
 // Organization is a tenant root.
 type Organization struct {
-	ID        string            `json:"id"`
-	Name      string            `json:"name"`
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
 	Attributes map[string]string `json:"attributes,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
+	CreatedAt  time.Time         `json:"created_at"`
 }
 
 // OutboxEntry is a transactional outbox row.

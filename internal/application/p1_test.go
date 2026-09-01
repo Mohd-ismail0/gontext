@@ -15,8 +15,8 @@ import (
 	"github.com/xsama/context-fabric/internal/changes"
 	"github.com/xsama/context-fabric/internal/ingest"
 	"github.com/xsama/context-fabric/internal/mapping"
-	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/policy"
+	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/retrieval"
 )
 
@@ -79,9 +79,9 @@ func TestIntakeBatch(t *testing.T) {
 		body, _ := json.Marshal(payload)
 		return app.IntakeRequest{
 			Event: ports.IntakeEvent{EventID: id, IdempotencyKey: "idem-" + id, SourceSystem: src.SourceID},
-			Body: body, Signature: ingest.SignHMAC(src.SigningSecret, body),
+			Body:  body, Signature: ingest.SignHMAC(src.SigningSecret, body),
 			Timestamp: strconv.FormatInt(fixed.Unix(), 10),
-			SourceID: src.SourceID, Payload: payload,
+			SourceID:  src.SourceID, Payload: payload,
 		}
 	}
 	out, err := svc.IntakeBatch(ctx, creds, org, []app.IntakeRequest{

@@ -18,16 +18,16 @@ import (
 
 // Spec is a versioned MappingSpec (contracts/jsonschema/mapping-spec.json).
 type Spec struct {
-	APIVersion     string         `json:"api_version"`
-	ID             string         `json:"id"`
-	Revision       string         `json:"revision"`
-	OrganizationID string         `json:"organization_id"`
-	SourceID       string         `json:"source_id"`
-	Status         string         `json:"status"`
-	Description    string         `json:"description,omitempty"`
-	Mappings       FieldMappings  `json:"mappings"`
-	Edges          []EdgeMapping  `json:"edges,omitempty"`
-	Constraints    Constraints    `json:"constraints,omitempty"`
+	APIVersion     string        `json:"api_version"`
+	ID             string        `json:"id"`
+	Revision       string        `json:"revision"`
+	OrganizationID string        `json:"organization_id"`
+	SourceID       string        `json:"source_id"`
+	Status         string        `json:"status"`
+	Description    string        `json:"description,omitempty"`
+	Mappings       FieldMappings `json:"mappings"`
+	Edges          []EdgeMapping `json:"edges,omitempty"`
+	Constraints    Constraints   `json:"constraints,omitempty"`
 }
 
 // EdgeMapping declares a knowledge-graph edge emitted on intake (ADR 0013).
@@ -37,7 +37,7 @@ type EdgeMapping struct {
 	From            *Expr `json:"from,omitempty"` // default: mapped resource_id
 	To              *Expr `json:"to"`
 	Confidence      *Expr `json:"confidence,omitempty"`
-	EnsureEndpoints *bool `json:"ensure_endpoints,omitempty"` // default true
+	EnsureEndpoints *bool `json:"ensure_endpoints,omitempty"`  // default true
 	SyncAuthzParent *bool `json:"sync_authz_parent,omitempty"` // default true when predicate=parent
 }
 
@@ -89,12 +89,12 @@ type Constraints struct {
 
 // SourceCeilings are authority limits from the source registration.
 type SourceCeilings struct {
-	OrganizationID            string
-	TrustCeiling              string
-	AuthorityCeiling          string
-	ClassificationCeiling     string
-	AllowedVisibilityRefs     []string
-	AllowedRecordTypes        []string
+	OrganizationID        string
+	TrustCeiling          string
+	AuthorityCeiling      string
+	ClassificationCeiling string
+	AllowedVisibilityRefs []string
+	AllowedRecordTypes    []string
 }
 
 // Canonical is the mapped intake fields ready for ledger write.

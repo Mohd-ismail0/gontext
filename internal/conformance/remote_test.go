@@ -31,7 +31,7 @@ func TestRemoteRunnerToolsCallAndParity(t *testing.T) {
 		Index:    idx,
 		Audit:    audit.NewMemory(),
 		Quota:    quota.NewLimiter(quota.DefaultLimits()),
-		Ready: func() bool { return true },
+		Ready:    func() bool { return true },
 		ReadyDetail: func() (bool, map[string]any) {
 			return true, map[string]any{"process": map[string]any{"ok": true}}
 		},

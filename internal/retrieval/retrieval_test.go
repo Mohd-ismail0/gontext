@@ -42,8 +42,8 @@ func TestTagCannotWidenAccess(t *testing.T) {
 		Text:       "billing secret",
 		Labels:     []string{"classification:public", "visibility:public", "purpose:support"},
 		Attributes: map[string]string{
-			"classification":     "restricted", // system field
-			"purpose_allowlist":  "support",
+			"classification":    "restricted", // system field
+			"purpose_allowlist": "support",
 		},
 	}})
 

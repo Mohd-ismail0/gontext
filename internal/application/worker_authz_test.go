@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/adapters/memory"
 	"github.com/xsama/context-fabric/internal/adapters/openfga"
+	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/ports"
 )
 

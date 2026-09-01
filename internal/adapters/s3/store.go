@@ -37,9 +37,9 @@ type Config struct {
 
 // Store is an S3-compatible EvidenceStore.
 type Store struct {
-	client  *s3.Client
-	bucket  string
-	presign *s3.PresignClient
+	client   *s3.Client
+	bucket   string
+	presign  *s3.PresignClient
 	maxBytes int64
 }
 

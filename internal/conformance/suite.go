@@ -12,9 +12,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/adapters/memory"
 	"github.com/xsama/context-fabric/internal/adapters/openfga"
+	app "github.com/xsama/context-fabric/internal/application"
 	"github.com/xsama/context-fabric/internal/audit"
 	"github.com/xsama/context-fabric/internal/authn"
 	"github.com/xsama/context-fabric/internal/changes"

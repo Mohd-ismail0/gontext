@@ -19,40 +19,40 @@ type authorizationFixture struct {
 	Description string `json:"description"`
 	FixtureOnly bool   `json:"fixture_only"`
 	Principal   struct {
-		Type               string   `json:"type"`
-		ID                 string   `json:"id"`
-		OrganizationID     string   `json:"organization_id"`
-		Roles              []string `json:"roles"`
-		Team               string   `json:"team"`
-		DelegationGrantID  string   `json:"delegation_grant_id"`
-		DelegationStatus   string   `json:"delegation_status"`
-		ExpiresAt          string   `json:"expires_at"`
-		RevokedAt          string   `json:"revoked_at"`
-		Subject            string   `json:"subject"`
-		Owner              string   `json:"owner"`
-		Runtime            string   `json:"runtime"`
+		Type              string   `json:"type"`
+		ID                string   `json:"id"`
+		OrganizationID    string   `json:"organization_id"`
+		Roles             []string `json:"roles"`
+		Team              string   `json:"team"`
+		DelegationGrantID string   `json:"delegation_grant_id"`
+		DelegationStatus  string   `json:"delegation_status"`
+		ExpiresAt         string   `json:"expires_at"`
+		RevokedAt         string   `json:"revoked_at"`
+		Subject           string   `json:"subject"`
+		Owner             string   `json:"owner"`
+		Runtime           string   `json:"runtime"`
 	} `json:"principal"`
 	Action   string `json:"action"`
 	Resource struct {
-		Type               string   `json:"type"`
-		ID                 string   `json:"id"`
-		OrganizationID     string   `json:"organization_id"`
-		Classification     string   `json:"classification"`
-		PurposeAllowlist   []string `json:"purpose_allowlist"`
-		TagsAfterMutation  []string `json:"tags_after_mutation"`
+		Type              string   `json:"type"`
+		ID                string   `json:"id"`
+		OrganizationID    string   `json:"organization_id"`
+		Classification    string   `json:"classification"`
+		PurposeAllowlist  []string `json:"purpose_allowlist"`
+		TagsAfterMutation []string `json:"tags_after_mutation"`
 	} `json:"resource"`
-	Purpose     string `json:"purpose"`
-	PathOrgID   string `json:"path_org_id"`
-	Consistency string `json:"consistency"`
+	Purpose       string `json:"purpose"`
+	PathOrgID     string `json:"path_org_id"`
+	Consistency   string `json:"consistency"`
 	CallerFilters struct {
 		IncludeTags []string `json:"include_tags"`
 	} `json:"caller_filters"`
 	Expected struct {
-		Decision             string   `json:"decision"`
-		ReasonCode           string   `json:"reason_code"`
-		ActionRestrictions   []string `json:"action_restrictions"`
-		MustNotDisclose      []string `json:"must_not_disclose"`
-		Invariants           []string `json:"invariants"`
+		Decision           string   `json:"decision"`
+		ReasonCode         string   `json:"reason_code"`
+		ActionRestrictions []string `json:"action_restrictions"`
+		MustNotDisclose    []string `json:"must_not_disclose"`
+		Invariants         []string `json:"invariants"`
 	} `json:"expected"`
 }
 

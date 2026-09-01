@@ -33,9 +33,9 @@ type OIDCConfig struct {
 	ClaimOrg     string
 	// ClaimScopes is the primary OAuth scope claim (default "scope").
 	// If empty, Authenticate also tries "scp" (Azure AD style).
-	ClaimScopes  string
-	HTTPClient   *http.Client
-	CacheTTL     time.Duration
+	ClaimScopes string
+	HTTPClient  *http.Client
+	CacheTTL    time.Duration
 }
 
 // OIDCProvider validates bearer JWTs via JWKS and maps claims to Principal.

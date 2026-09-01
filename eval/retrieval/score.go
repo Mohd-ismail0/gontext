@@ -13,20 +13,20 @@ import (
 )
 
 type task struct {
-	ID             string   `json:"id"`
-	GoldResources  []string `json:"gold_resources"`
-	ExpectAbstain  bool     `json:"expect_abstain"`
-	Route          string   `json:"route"`
+	ID            string   `json:"id"`
+	GoldResources []string `json:"gold_resources"`
+	ExpectAbstain bool     `json:"expect_abstain"`
+	Route         string   `json:"route"`
 }
 
 type prediction struct {
-	ID            string   `json:"id"`
-	ResourceIDs   []string `json:"resource_ids"`
-	ToolCalls     int      `json:"tool_calls"`
-	LatencyMS     float64  `json:"latency_ms"`
-	AuthzChecks   int      `json:"authz_checks"`
-	Abstained     bool     `json:"abstained"`
-	TokensApprox  int      `json:"tokens_approx"`
+	ID           string   `json:"id"`
+	ResourceIDs  []string `json:"resource_ids"`
+	ToolCalls    int      `json:"tool_calls"`
+	LatencyMS    float64  `json:"latency_ms"`
+	AuthzChecks  int      `json:"authz_checks"`
+	Abstained    bool     `json:"abstained"`
+	TokensApprox int      `json:"tokens_approx"`
 }
 
 func main() {

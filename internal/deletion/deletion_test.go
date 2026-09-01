@@ -9,8 +9,8 @@ import (
 	"github.com/xsama/context-fabric/internal/audit"
 	"github.com/xsama/context-fabric/internal/authn"
 	"github.com/xsama/context-fabric/internal/deletion"
-	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/policy"
+	"github.com/xsama/context-fabric/internal/ports"
 	"github.com/xsama/context-fabric/internal/retrieval"
 )
 
@@ -49,7 +49,7 @@ func TestTombstoneDominatesSearch(t *testing.T) {
 	}
 	pkt, err := pipe.Search(ctx, retrieval.Request{
 		Credentials: ports.Credentials{BearerToken: "local:org_del_1:alice:employee"},
-		OrgID: org, Query: "billing", Purpose: "support", Limit: 10, Action: "context.search",
+		OrgID:       org, Query: "billing", Purpose: "support", Limit: 10, Action: "context.search",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestTombstoneDominatesSearch(t *testing.T) {
 	manifest, err := del.Run(ctx, deletion.Request{
 		OrgID: org, ResourceID: rec.ResourceID,
 		Principal: ports.Principal{ID: "local|alice", Kind: ports.PrincipalKindUser, OrgID: org, Subject: "alice"},
-		Reason: "user_request",
+		Reason:    "user_request",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestTombstoneDominatesSearch(t *testing.T) {
 
 	pkt2, err := pipe.Search(ctx, retrieval.Request{
 		Credentials: ports.Credentials{BearerToken: "local:org_del_1:alice:employee"},
-		OrgID: org, Query: "billing", Purpose: "support", Limit: 10, Action: "context.search",
+		OrgID:       org, Query: "billing", Purpose: "support", Limit: 10, Action: "context.search",
 	})
 	if err != nil {
 		t.Fatal(err)
