@@ -43,6 +43,26 @@ func TestSecretValueFromFile(t *testing.T) {
 	}
 }
 
+func TestLoadBaseSkipsRuntimeDeps(t *testing.T) {
+	t.Setenv("PROFILE", "starter")
+	t.Setenv("CONTEXT_FABRIC_MEMORY", "")
+	t.Setenv("POSTGRES_DSN", "postgres://u:p@localhost/db")
+	t.Setenv("POSTGRES_ADMIN_DSN", "postgres://admin:p@localhost/db")
+	t.Setenv("WEBHOOK_SIGNING_SECRET", "")
+	t.Setenv("DELETION_SIGNING_SECRET", "")
+
+	cfg, err := LoadBase()
+	if err != nil {
+		t.Fatalf("LoadBase: %v", err)
+	}
+	if cfg.Profile != "starter" {
+		t.Fatalf("profile=%q", cfg.Profile)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("expected full Load to require runtime deps")
+	}
+}
+
 func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
 	t.Setenv("PROFILE", "starter")
 	t.Setenv("CONTEXT_FABRIC_MEMORY", "")

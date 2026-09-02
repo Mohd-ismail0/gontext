@@ -162,10 +162,10 @@
     "semantic_hash": ""
   },
   "go.mod": {
-    "mtime": 1787572271.0290904,
-    "seen": 1788272254.4933352,
-    "ast_hash": "533c7df9e40fe62b2e9ae4ae7f6c3794",
-    "semantic_hash": "533c7df9e40fe62b2e9ae4ae7f6c3794"
+    "mtime": 1788330013.936572,
+    "seen": 1788338164.8328798,
+    "ast_hash": "98aa4f715b14acc751ceffab7b36c30d",
+    "semantic_hash": ""
   },
   "internal/adapters/memory/credentials.go": {
     "mtime": 1788274216.9321716,
@@ -714,15 +714,15 @@
     "semantic_hash": "2ae0f369b96e4eed29a056e70c02dc52"
   },
   "deploy/compose/docker-compose.minimal.yaml": {
-    "mtime": 1788273042.2376983,
-    "seen": 1788273059.16283,
-    "ast_hash": "e4f99083030975d246aba45b6b866628",
+    "mtime": 1788338154.1689012,
+    "seen": 1788338164.8418794,
+    "ast_hash": "9ea29be1b57a5abe570caea54586cb88",
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.yml": {
-    "mtime": 1788273039.6519837,
-    "seen": 1788273059.163931,
-    "ast_hash": "fbe8c8c6b913b14a557e4cb93cb02432",
+    "mtime": 1788338154.1689012,
+    "seen": 1788338164.8418794,
+    "ast_hash": "9b8db9b6d58180ba51bcef6d645ee027",
     "semantic_hash": ""
   },
   "deploy/coolify/README.md": {
@@ -1098,9 +1098,9 @@
     "semantic_hash": ""
   },
   "scripts/compose-smoke.sh": {
-    "mtime": 1788272885.6660266,
-    "seen": 1788272932.8330753,
-    "ast_hash": "c56011201c8b4c6609c669073abffd33",
+    "mtime": 1788329814.5807052,
+    "seen": 1788329994.2609231,
+    "ast_hash": "4258760a85ac5a623b1ec6060488998c",
     "semantic_hash": ""
   },
   "scripts/compose-starter-preflight.sh": {
@@ -1116,9 +1116,9 @@
     "semantic_hash": ""
   },
   ".github/workflows/integration.yml": {
-    "mtime": 1788272871.4352853,
-    "seen": 1788272871.7202053,
-    "ast_hash": "a5187090a77fa2d99912a01b1929edda",
+    "mtime": 1788338154.6707926,
+    "seen": 1788338164.8408797,
+    "ast_hash": "c63cc028b35fb114ca4c1908a349753c",
     "semantic_hash": ""
   },
   ".github/workflows/release.yml": {
@@ -1134,15 +1134,15 @@
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.starter.yaml": {
-    "mtime": 1788272985.5966597,
-    "seen": 1788272997.8559604,
-    "ast_hash": "f9dc5ad5ef5e4658c37eaa094dc80a4f",
+    "mtime": 1788338154.1689012,
+    "seen": 1788338164.8418794,
+    "ast_hash": "65dd9770039d34a75aab37c248dafbb8",
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.test.yaml": {
-    "mtime": 1788272848.9963572,
-    "seen": 1788272871.7202053,
-    "ast_hash": "9bd90e2f17887228c2f4b0af8003c108",
+    "mtime": 1788338154.1700473,
+    "seen": 1788338164.8418794,
+    "ast_hash": "320f49f227e39c2b28e42fcd621ac51e",
     "semantic_hash": ""
   },
   "deploy/helm/context-fabric/templates/ingress.yaml": {

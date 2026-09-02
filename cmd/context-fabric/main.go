@@ -634,7 +634,7 @@ func runConnector(args []string) error {
 }
 
 func runMigrate() error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadBase()
 	if err != nil {
 		return err
 	}
@@ -655,7 +655,7 @@ func runMigrate() error {
 }
 
 func runBootstrap() error {
-	cfg, err := config.Load()
+	cfg, err := config.LoadBase()
 	if err != nil {
 		return err
 	}

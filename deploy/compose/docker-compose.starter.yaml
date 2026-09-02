@@ -104,6 +104,8 @@ services:
       OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
       OPENFGA_MODEL_PATH: /contracts/openfga/model.fga
       OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+    volumes:
+      - openfga_bootstrap:/var/run/context-fabric
     networks: !reset
       - data
 
@@ -146,6 +148,8 @@ services:
       CAPABILITY_S3_VERSIONING: ${CAPABILITY_S3_VERSIONING:-true}
       CAPABILITY_S3_OBJECT_LOCK: ${CAPABILITY_S3_OBJECT_LOCK:-true}
       CAPABILITY_OPENFGA_STORE: ${CAPABILITY_OPENFGA_STORE:-true}
+    volumes:
+      - openfga_bootstrap:/var/run/context-fabric
     networks: !reset
       - data
       - gateway

@@ -159,6 +159,20 @@ func Load() (Config, error) {
 	return cfg, nil
 }
 
+// LoadBase reads configuration and enforces profile escape hatches without
+// requiring the full runtime dependency surface (NATS, S3, OIDC, etc.).
+// Use for one-shot roles such as migrate and bootstrap.
+func LoadBase() (Config, error) {
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		return Config{}, err
+	}
+	if err := ValidateEscapeHatches(cfg.Profile); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
 // LoadFromEnv reads configuration from the process environment without validation.
 func LoadFromEnv() (Config, error) {
 	profile := Profile(firstEnv("starter", "PROFILE", "CONTEXT_FABRIC_PROFILE"))
