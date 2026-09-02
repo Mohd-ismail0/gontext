@@ -1,7 +1,7 @@
-# Graph Report - gontext  (2026-09-02)
+# Graph Report - gontext  (2026-09-01)
 
 ## Corpus Check
-- 196 files · ~129,488 words
+- 196 files · ~129,479 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b700396d`
+- Built from commit: `a7b90e8d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

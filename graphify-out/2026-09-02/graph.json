@@ -54023,7 +54023,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "scripts/compose-smoke.sh",
-      "source_location": "L31",
+      "source_location": "L27",
       "weight": 1.0
     },
     {
@@ -111457,5 +111457,5 @@
       "source_file": "README.md"
     }
   ],
-  "built_at_commit": "b700396d80dbe372868c93bb4f0916260462cabd"
+  "built_at_commit": "a7b90e8dc749290e49b444b43a3dcc3498889eaf"
 }

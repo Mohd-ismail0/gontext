@@ -10,8 +10,12 @@ SMOKE_TIMEOUT="${SMOKE_TIMEOUT:-300}"
 BASE_URL="${SMOKE_BASE_URL:-}"
 
 compose() {
-  # shellcheck disable=SC2086
-  docker compose -f $COMPOSE_FILES --env-file "$ENV_FILE" "$@"
+  local -a file_args=()
+  local f
+  for f in $COMPOSE_FILES; do
+    file_args+=(-f "$f")
+  done
+  docker compose "${file_args[@]}" --env-file "$ENV_FILE" "$@"
 }
 
 if [[ ! -f "$ENV_FILE" ]]; then
