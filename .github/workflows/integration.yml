@@ -32,10 +32,14 @@ jobs:
           sed -i 's|change-me-webhook-signing-secret|ci-webhook-signing-secret|g' deploy/compose/.env.starter
           sed -i 's|change-me-deletion-signing-secret|ci-deletion-signing-secret|g' deploy/compose/.env.starter
           sed -i 's|idp.example.com|dex:5556/dex|g' deploy/compose/.env.starter || true
+          sed -i 's|^GONTEXT_IMAGE=.*|GONTEXT_IMAGE=gontext:ci|' deploy/compose/.env.starter
+          sed -i 's|^GONTEXT_PULL_POLICY=.*|GONTEXT_PULL_POLICY=never|' deploy/compose/.env.starter
 
       - name: Compose starter smoke (Dex overlay)
         env:
           COMPOSE_TEST_OVERLAY: deploy/compose/docker-compose.test.yaml
+          GONTEXT_IMAGE: gontext:ci
+          GONTEXT_PULL_POLICY: never
           DEX_TOKEN_URL: http://localhost:5556/dex/token
           DEX_USERNAME: alice@example.com
           DEX_PASSWORD: password

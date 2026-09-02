@@ -10,6 +10,9 @@ name: gontext-starter
 
 x-starter-app: &starter_app
   image: ${GONTEXT_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
+  build:
+    context: ../..
+    dockerfile: Dockerfile
   pull_policy: ${GONTEXT_PULL_POLICY:-if_not_present}
   read_only: true
   security_opt:
