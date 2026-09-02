@@ -78,12 +78,18 @@ fi
 # Optional Dex/static OIDC smoke when DEX_TOKEN_URL is set (integration CI).
 if [[ -n "${DEX_TOKEN_URL:-}" ]]; then
   echo "smoke: fetching OIDC token from $DEX_TOKEN_URL"
-  token_json="$(curl -fsS -X POST "$DEX_TOKEN_URL" \
+  # Dex confidential clients authenticate via HTTP Basic, not body client_secret.
+  token_json="$(curl -sS -X POST "$DEX_TOKEN_URL" \
+    -u "${DEX_CLIENT_ID:-context-fabric-starter}:${DEX_CLIENT_SECRET:-}" \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    -d "grant_type=password&username=${DEX_USERNAME:-alice@example.com}&password=${DEX_PASSWORD:-password}&scope=openid&client_id=${DEX_CLIENT_ID:-context-fabric-starter}&client_secret=${DEX_CLIENT_SECRET:-}")"
-  access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")"
+    --data-urlencode 'grant_type=password' \
+    --data-urlencode "username=${DEX_USERNAME:-alice@example.com}" \
+    --data-urlencode "password=${DEX_PASSWORD:-password}" \
+    --data-urlencode 'scope=openid email groups' || true)"
+  access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token') or json.load(open('/dev/null')) if False else '')" 2>/dev/null || true)"
+  access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('access_token') or d.get('id_token') or '')" 2>/dev/null || true)"
   if [[ -z "$access_token" ]]; then
-    echo "smoke: failed to obtain access_token from Dex" >&2
+    echo "smoke: failed to obtain access_token from Dex: ${token_json:-<empty>}" >&2
     exit 1
   fi
   http_code="$(curl -sSk -o /dev/null -w '%{http_code}' \
