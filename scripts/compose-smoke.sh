@@ -91,13 +91,17 @@ if [[ -n "${DEX_TOKEN_URL:-}" ]]; then
     echo "smoke: failed to obtain access_token from Dex: ${token_json:-<empty>}" >&2
     exit 1
   fi
-  http_code="$(curl -sSk -o /dev/null -w '%{http_code}' \
+  http_code="$(curl -sSk -o /tmp/smoke-org-status.out -w '%{http_code}' \
     -H "Authorization: Bearer $access_token" \
     "$BASE_URL/v1/organizations/org1/status" || true)"
   case "$http_code" in
     200|400|403|404) echo "smoke: OIDC-authenticated probe ok (HTTP $http_code)" ;;
     *)
-      echo "smoke: authenticated org status returned HTTP ${http_code:-none} (token rejected or gateway down)" >&2
+      echo "smoke: authenticated org status returned HTTP ${http_code:-none}" >&2
+      echo "smoke: response body: $(head -c 500 /tmp/smoke-org-status.out 2>/dev/null || true)" >&2
+      echo "smoke: dex JWKS from serve:" >&2
+      compose exec -T serve wget -qO- http://dex:5556/dex/keys 2>&1 | head -c 300 || true
+      echo >&2
       exit 1
       ;;
   esac
