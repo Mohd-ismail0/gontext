@@ -264,6 +264,15 @@
             "existingSecret": { "type": "string", "minLength": 1 },
             "key": { "type": "string", "minLength": 1 }
           }
+        },
+        "deletionSigning": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["existingSecret", "key"],
+          "properties": {
+            "existingSecret": { "type": "string", "minLength": 1 },
+            "key": { "type": "string", "minLength": 1 }
+          }
         }
       }
     },

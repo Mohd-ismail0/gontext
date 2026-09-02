@@ -35,7 +35,10 @@ LABEL org.opencontainers.image.title="gontext" \
 
 RUN apk add --no-cache ca-certificates wget \
   && addgroup -g 65532 -S nonroot \
-  && adduser -u 65532 -S nonroot -G nonroot
+  && adduser -u 65532 -S nonroot -G nonroot \
+  && mkdir -p /run/context-fabric \
+  && chown nonroot:nonroot /run/context-fabric \
+  && chmod 0775 /run/context-fabric
 
 COPY --from=builder /out/context-fabric /usr/local/bin/context-fabric
 COPY internal/migrate/migrations /migrations

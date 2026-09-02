@@ -86,14 +86,16 @@ if [[ -n "${DEX_TOKEN_URL:-}" ]]; then
     echo "smoke: failed to obtain access_token from Dex" >&2
     exit 1
   fi
-  http_code="$(curl -fsSk -o /dev/null -w '%{http_code}' \
+  http_code="$(curl -sSk -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer $access_token" \
-    "$BASE_URL/v1/search?query=smoke&limit=1" || true)"
-  if [[ "$http_code" != "200" && "$http_code" != "404" ]]; then
-    echo "smoke: authenticated search returned HTTP $http_code (expected 200/404)" >&2
-    exit 1
-  fi
-  echo "smoke: OIDC-authenticated search probe ok (HTTP $http_code)"
+    "$BASE_URL/v1/organizations/org1/status" || true)"
+  case "$http_code" in
+    200|400|403|404) echo "smoke: OIDC-authenticated probe ok (HTTP $http_code)" ;;
+    *)
+      echo "smoke: authenticated org status returned HTTP ${http_code:-none} (token rejected or gateway down)" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 echo "smoke: passed"

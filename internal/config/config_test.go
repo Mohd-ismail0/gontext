@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -81,8 +82,46 @@ func TestIsOpenFGAModelPlaceholder(t *testing.T) {
 	if !IsOpenFGAModelPlaceholder("demo-model-v1") {
 		t.Fatal("expected demo-model-v1 placeholder")
 	}
+	if !IsOpenFGAModelPlaceholder("scaled-model-v1") {
+		t.Fatal("expected scaled-model-v1 placeholder")
+	}
+	if !IsOpenFGAModelPlaceholder("xsama-model-v1") {
+		t.Fatal("expected xsama-model-v1 placeholder")
+	}
 	if IsOpenFGAModelPlaceholder("0123456789abcdef") {
 		t.Fatal("real model id should not be placeholder")
+	}
+}
+
+func TestWriteSecretFileCreatesParents(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nested", "openfga_store_id")
+	if err := WriteSecretFile(path, "store-abc"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(b)); got != "store-abc" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSecretValueModelIDPrefersFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "openfga_model_id")
+	if err := os.WriteFile(path, []byte("model-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENFGA_MODEL_ID", "starter-model-v1")
+	t.Setenv("OPENFGA_MODEL_ID_FILE", path)
+	got, err := secretValue("OPENFGA_MODEL_ID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "model-from-file" {
+		t.Fatalf("got %q", got)
 	}
 }
 
