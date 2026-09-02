@@ -20,8 +20,8 @@ staticClients:
 enablePasswordDB: true
 staticPasswords:
   - email: alice@example.com
-    # bcrypt hash of "password" (Dex example config-dev.yaml)
-    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiVbs7aKXvYJk6MKdi"
+    # bcrypt cost 10 of the string "password" (verified with golang.org/x/crypto/bcrypt)
+    hash: '$2a$10$ysxvJj/NwDPNg9dTol1E/uavwy7kNff1qZn6fi360AUDPtLpo/4pK'
     username: alice
     userID: alice
     groups:

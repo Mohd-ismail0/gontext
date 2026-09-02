@@ -86,7 +86,6 @@ if [[ -n "${DEX_TOKEN_URL:-}" ]]; then
     --data-urlencode "username=${DEX_USERNAME:-alice@example.com}" \
     --data-urlencode "password=${DEX_PASSWORD:-password}" \
     --data-urlencode 'scope=openid email groups' || true)"
-  access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token') or json.load(open('/dev/null')) if False else '')" 2>/dev/null || true)"
   access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('access_token') or d.get('id_token') or '')" 2>/dev/null || true)"
   if [[ -z "$access_token" ]]; then
     echo "smoke: failed to obtain access_token from Dex: ${token_json:-<empty>}" >&2
