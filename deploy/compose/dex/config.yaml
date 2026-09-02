@@ -6,6 +6,10 @@ web:
 oauth2:
   skipApprovalScreen: true
   passwordConnector: local
+  grantTypes:
+    - authorization_code
+    - refresh_token
+    - password
 staticClients:
   - id: context-fabric-starter
     secret: integration-dex-secret
@@ -16,8 +20,8 @@ staticClients:
 enablePasswordDB: true
 staticPasswords:
   - email: alice@example.com
-    # bcrypt hash of "password" (Dex example)
-    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiVbs7aKXvYJk6MKdi
+    # bcrypt hash of "password" (Dex example config-dev.yaml)
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiVbs7aKXvYJk6MKdi"
     username: alice
     userID: alice
     groups:
