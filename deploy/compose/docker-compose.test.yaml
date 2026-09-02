@@ -1,15 +1,9 @@
 # Dex OIDC test IdP overlay for integration CI.
 # Merges with starter stack; point OIDC_* env vars at dex in .env.starter for CI.
 #
-# Starter's `data` network is internal. Containers attached to an internal
-# network get Docker DNS SERVFAIL ("server misbehaving") for names that are
-# only on the public gateway network. CI therefore:
-#   - turns off data.internal so serve can resolve dex
-#   - attaches dex to both data and gateway (JWKS + published :5556)
-
-networks:
-  data:
-    internal: false
+# Serve is attached to starter's internal `data` network. Docker's embedded DNS
+# then SERVFAILs lookups for `dex` ("server misbehaving"). Pin dex in serve's
+# /etc/hosts to the host gateway and publish Dex on :5556 so JWKS is reachable.
 
 services:
   dex:
@@ -19,12 +13,13 @@ services:
     volumes:
       - ./dex/config.yaml:/etc/dex/config.yaml:ro
     networks:
-      - data
       - gateway
     ports:
       - "5556:5556"
 
   serve:
+    extra_hosts:
+      - "dex:host-gateway"
     environment:
       OIDC_ISSUER: http://dex:5556/dex
       OIDC_AUDIENCE: context-fabric-starter
