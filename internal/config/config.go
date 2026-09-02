@@ -522,10 +522,12 @@ func envFile(key string) string {
 func secretValue(key string) (string, error) {
 	if path := strings.TrimSpace(os.Getenv(key + "_FILE")); path != "" {
 		b, err := os.ReadFile(path)
-		if err != nil {
+		if err == nil {
+			return strings.TrimSpace(string(b)), nil
+		}
+		if !os.IsNotExist(err) {
 			return "", fmt.Errorf("read %s_FILE: %w", key, err)
 		}
-		return strings.TrimSpace(string(b)), nil
 	}
 	return strings.TrimSpace(os.Getenv(key)), nil
 }

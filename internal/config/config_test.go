@@ -43,6 +43,37 @@ func TestSecretValueFromFile(t *testing.T) {
 	}
 }
 
+func TestSecretValueMissingFileFallsBackToEnv(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.txt")
+	t.Setenv("OPENFGA_STORE_ID", "replace-after-bootstrap")
+	t.Setenv("OPENFGA_STORE_ID_FILE", missing)
+	got, err := secretValue("OPENFGA_STORE_ID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "replace-after-bootstrap" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestSecretValuePrefersExistingFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "openfga_store_id")
+	if err := os.WriteFile(path, []byte("store-from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("OPENFGA_STORE_ID", "replace-after-bootstrap")
+	t.Setenv("OPENFGA_STORE_ID_FILE", path)
+	got, err := secretValue("OPENFGA_STORE_ID")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "store-from-file" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestLoadBaseSkipsRuntimeDeps(t *testing.T) {
 	t.Setenv("PROFILE", "starter")
 	t.Setenv("CONTEXT_FABRIC_MEMORY", "")
