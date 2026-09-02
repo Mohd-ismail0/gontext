@@ -28,7 +28,11 @@ if [[ -n "${COMPOSE_TEST_OVERLAY:-}" ]]; then
 fi
 
 echo "==> compose starter smoke (timeout ${SMOKE_TIMEOUT}s)"
-compose up -d --build
+if ! compose up -d --build; then
+  echo "smoke: compose up failed; dumping one-shot service logs" >&2
+  compose logs --tail=120 migrate bootstrap minio-init 2>/dev/null || true
+  exit 1
+fi
 
 deadline=$((SECONDS + SMOKE_TIMEOUT))
 ready=0

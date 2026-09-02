@@ -8,15 +8,53 @@ ALTER TABLE search_documents
   ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';
 
 -- Materialized tsvector from thin fields only (never full evidence blobs).
+-- Trigger-maintained: GENERATED STORED requires immutable expressions;
+-- to_tsvector(regconfig, text) is STABLE in PostgreSQL.
 ALTER TABLE search_documents
-  ADD COLUMN IF NOT EXISTS search_tsv tsvector
-  GENERATED ALWAYS AS (
-    setweight(to_tsvector('english', coalesce(title, '')), 'A') ||
-    setweight(to_tsvector('english', coalesce(summary, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(kind, '')), 'C') ||
-    setweight(to_tsvector('english', coalesce(text, '')), 'D') ||
-    setweight(to_tsvector('english', coalesce(array_to_string(tags, ' '), '')), 'C')
-  ) STORED;
+  ADD COLUMN IF NOT EXISTS search_tsv tsvector;
+
+CREATE OR REPLACE FUNCTION search_documents_compute_tsv(
+  p_title text,
+  p_summary text,
+  p_kind text,
+  p_body text,
+  p_tags text[]
+) RETURNS tsvector
+LANGUAGE sql
+STABLE
+SET search_path = public
+AS $$
+  SELECT
+    setweight(to_tsvector('english', coalesce(p_title, '')), 'A') ||
+    setweight(to_tsvector('english', coalesce(p_summary, '')), 'B') ||
+    setweight(to_tsvector('english', coalesce(p_kind, '')), 'C') ||
+    setweight(to_tsvector('english', coalesce(p_body, '')), 'D') ||
+    setweight(to_tsvector('english', coalesce(array_to_string(p_tags, ' '), '')), 'C');
+$$;
+
+CREATE OR REPLACE FUNCTION search_documents_tsv_trigger()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public
+AS $$
+BEGIN
+  NEW.search_tsv := search_documents_compute_tsv(
+    NEW.title, NEW.summary, NEW.kind, NEW.text, NEW.tags
+  );
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_search_documents_tsv ON search_documents;
+CREATE TRIGGER trg_search_documents_tsv
+  BEFORE INSERT OR UPDATE OF title, kind, context_space_id, summary, text, tags
+  ON search_documents
+  FOR EACH ROW
+  EXECUTE FUNCTION search_documents_tsv_trigger();
+
+UPDATE search_documents sd
+SET search_tsv = search_documents_compute_tsv(sd.title, sd.summary, sd.kind, sd.text, sd.tags)
+WHERE sd.search_tsv IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_search_documents_tsv
   ON search_documents USING GIN (search_tsv);
