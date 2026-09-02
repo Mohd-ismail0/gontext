@@ -107,6 +107,15 @@ services:
       OPENFGA_MODEL_ID_FILE: /var/run/context-fabric/openfga_model_id
     volumes:
       - openfga_bootstrap:/var/run/context-fabric
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openfga:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      openfga-vol-init:
+        condition: service_completed_successfully
     networks: !reset
       - data
 
@@ -195,6 +204,14 @@ services:
       OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
       OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
       OPENFGA_MODEL_ID_FILE: /var/run/context-fabric/openfga_model_id
+      OIDC_ISSUER: ${OIDC_ISSUER}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL}
+      WEBHOOK_SIGNING_SECRET: ${WEBHOOK_SIGNING_SECRET}
+      DELETION_SIGNING_SECRET: ${DELETION_SIGNING_SECRET}
       CAPABILITY_PGVECTOR: ${CAPABILITY_PGVECTOR:-true}
       CAPABILITY_JETSTREAM_PERSISTENCE: ${CAPABILITY_JETSTREAM_PERSISTENCE:-true}
       CAPABILITY_S3_VERSIONING: ${CAPABILITY_S3_VERSIONING:-true}

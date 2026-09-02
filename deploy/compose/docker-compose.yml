@@ -70,8 +70,8 @@ services:
         done
         mc ready local
         for b in "$${S3_BUCKET_RAW}" "$${S3_BUCKET_DERIVED}" "$${S3_BUCKET_QUARANTINE}"; do
-          mc mb --ignore-existing "local/$${b}"
-          mc version enable "local/$${b}"
+          mc mb --with-lock "local/$${b}" || mc mb --ignore-existing "local/$${b}"
+          mc version enable "local/$${b}" || true
           mc retention set --default GOVERNANCE 30d "local/$${b}" || true
         done
     networks:
@@ -140,6 +140,17 @@ services:
     expose:
       - "8080"
       - "8081"
+
+  # Named volumes are root-owned; the image runs as uid 65532. Chown so
+  # bootstrap can write OPENFGA_*_FILE pins that serve/worker then read.
+  openfga-vol-init:
+    image: alpine:3.21
+    user: "0:0"
+    network_mode: none
+    command: ["sh", "-c", "chown -R 65532:65532 /data && chmod 0775 /data"]
+    volumes:
+      - openfga_bootstrap:/data
+    restart: "no"
 
   migrate:
     image: ${CONTEXT_FABRIC_IMAGE:-ghcr.io/mohd-ismail0/gontext:1.0.0}
@@ -235,6 +246,8 @@ services:
       openfga:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      openfga-vol-init:
         condition: service_completed_successfully
     networks:
       - private

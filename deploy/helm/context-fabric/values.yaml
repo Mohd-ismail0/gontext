@@ -173,6 +173,9 @@ secrets:
   webhookSigning:
     existingSecret: context-fabric-platform
     key: webhook-signing-secret
+  deletionSigning:
+    existingSecret: context-fabric-platform
+    key: deletion-signing-secret
 
 podSecurityContext:
   runAsNonRoot: true
