@@ -90,6 +90,9 @@ services:
 
   bootstrap:
     <<: *starter_app
+    # One-shot: Docker creates named volumes root-owned; seed OpenFGA pins then chown for serve/worker (nonroot).
+    user: "0:0"
+    read_only: false
     env_file: !reset []
     environment:
       CONTEXT_FABRIC_ROLE: bootstrap

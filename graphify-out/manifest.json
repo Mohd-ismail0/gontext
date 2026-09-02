@@ -6,9 +6,9 @@
     "semantic_hash": "c7ea98208245cd0e4a2e82b3eae7010e"
   },
   "cmd/context-fabric/main.go": {
-    "mtime": 1788359592.2708824,
-    "seen": 1788359649.3434167,
-    "ast_hash": "49525e95e32bfd1a461ecaa6a5bd45a4",
+    "mtime": 1788359937.7551353,
+    "seen": 1788359945.487678,
+    "ast_hash": "25ef640c2183c7a7794a030c9d3d1c93",
     "semantic_hash": ""
   },
   "contracts/authorization-fixtures/agent-active-allow.json": {
@@ -720,9 +720,9 @@
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.yml": {
-    "mtime": 1788338154.1689012,
-    "seen": 1788338164.8418794,
-    "ast_hash": "9b8db9b6d58180ba51bcef6d645ee027",
+    "mtime": 1788359918.857337,
+    "seen": 1788359945.497682,
+    "ast_hash": "b74a00b76136dbba515f9f1f6e1db26e",
     "semantic_hash": ""
   },
   "deploy/coolify/README.md": {
@@ -1134,9 +1134,9 @@
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.starter.yaml": {
-    "mtime": 1788359599.034256,
-    "seen": 1788359649.3534164,
-    "ast_hash": "4a96ceda7f7c77869015ac1f5dc035fa",
+    "mtime": 1788359918.857337,
+    "seen": 1788359945.497682,
+    "ast_hash": "b3c089915cf08ace358dc3b3b7e33b4f",
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.test.yaml": {

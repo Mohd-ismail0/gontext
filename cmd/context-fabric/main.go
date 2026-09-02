@@ -960,6 +960,29 @@ func validateOpenFGAStoreID() error {
 	return nil
 }
 
+const bootstrapRuntimeUID = 65532
+const bootstrapRuntimeGID = 65532
+
+// writeBootstrapRuntimeFile persists OpenFGA pins on the shared compose volume.
+// When run as root (bootstrap one-shot), the directory and file are chowned for the nonroot runtime user.
+func writeBootstrapRuntimeFile(path, content string) error {
+	path = strings.TrimSpace(path)
+	content = strings.TrimSpace(content)
+	if path == "" || content == "" {
+		return nil
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o775); err != nil {
+		return err
+	}
+	_ = os.Chown(dir, bootstrapRuntimeUID, bootstrapRuntimeGID)
+	if err := os.WriteFile(path, []byte(content+"\n"), 0o644); err != nil {
+		return err
+	}
+	_ = os.Chown(path, bootstrapRuntimeUID, bootstrapRuntimeGID)
+	return nil
+}
+
 // bootstrapOpenFGA creates an OpenFGA store when possible, writes the JSON
 // authorization model when OPENFGA_MODEL_ID is empty, and validates the pin.
 func bootstrapOpenFGA(ctx context.Context) error {
@@ -1001,7 +1024,7 @@ func bootstrapOpenFGA(ctx context.Context) error {
 		fmt.Printf("bootstrap: created OpenFGA store id=%s — set OPENFGA_STORE_ID=%s\n", created, created)
 		store = created
 		if path := strings.TrimSpace(os.Getenv("OPENFGA_STORE_ID_FILE")); path != "" {
-			if err := os.WriteFile(path, []byte(store+"\n"), 0o644); err != nil {
+			if err := writeBootstrapRuntimeFile(path, store); err != nil {
 				return fmt.Errorf("write OPENFGA_STORE_ID_FILE: %w", err)
 			}
 			fmt.Printf("bootstrap: wrote store id to %s\n", path)
@@ -1022,7 +1045,7 @@ func bootstrapOpenFGA(ctx context.Context) error {
 		modelID = written
 		fmt.Printf("bootstrap: wrote authorization model id=%s — pin OPENFGA_MODEL_ID=%s\n", modelID, modelID)
 		if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
-			if err := os.WriteFile(path, []byte(modelID+"\n"), 0o644); err != nil {
+			if err := writeBootstrapRuntimeFile(path, modelID); err != nil {
 				return fmt.Errorf("write OPENFGA_MODEL_ID_FILE: %w", err)
 			}
 			fmt.Printf("bootstrap: wrote model id to %s\n", path)

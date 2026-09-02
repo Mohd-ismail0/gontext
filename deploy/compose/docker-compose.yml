@@ -215,6 +215,7 @@ services:
       context: ../..
       dockerfile: Dockerfile
     command: ["bootstrap"]
+    user: "0:0"
     env_file:
       - .env
     environment:

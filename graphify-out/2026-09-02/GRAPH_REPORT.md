@@ -1,16 +1,16 @@
 # Graph Report - gontext  (2026-09-02)
 
 ## Corpus Check
-- 196 files · ~129,967 words
+- 196 files · ~130,047 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3577 nodes · 6197 edges · 293 communities (276 shown, 17 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 84 edges (avg confidence: 0.79)
+- 3579 nodes · 6204 edges · 282 communities (265 shown, 17 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 85 edges (avg confidence: 0.79)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `968473bf`
+- Built from commit: `eccf6fad`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -26,28 +26,28 @@
 - Memory
 - ApplicationService
 - .Search
-- context.Context
+- Worker
 - CLI Commands
 - testing.T
-- NewStore
+- wire
 - .Intake
 - enum
 - Bounded Adaptive Retrieval Routing (ADR 0015)
-- ports.go
+- Service
 - oidc.go
 - suite.go
 - properties
 - config.go
 - properties
 - properties
-- Store
+- context.Context
 - Context Packet Schema
 - Helm Chart Template
 - buckets
 - properties
 - properties
 - TypeScript Package Config
-- wire
+- context-fabric/main.go
 - replay_window_seconds
 - Bus
 - required
@@ -57,7 +57,7 @@
 - required
 - AgentCredential
 - ErrUnavailable
-- time.Time
+- EvidenceRouter
 - Principal
 - required
 - required
@@ -99,7 +99,7 @@
 - serviceAccount
 - properties
 - required
-- probe
+- properties
 - properties
 - enum
 - Plugin Capabilities Schema
@@ -111,7 +111,7 @@
 - taxonomy.json
 - port
 - roles
-- Load
+- Config
 - TypeScript Compiler Config
 - enum
 - required
@@ -121,7 +121,7 @@
 - capabilities
 - properties
 - properties
-- properties
+- endpoint
 - setup
 - required
 - Citation Schema
@@ -130,7 +130,7 @@
 - enum
 - enum
 - properties
-- type
+- required
 - enum
 - required
 - type
@@ -138,7 +138,7 @@
 - type
 - type
 - enum
-- properties
+- newS3Evidence
 - database
 - metadata
 - jetstream
@@ -176,7 +176,7 @@
 - properties
 - export-manifest.json
 - ValidateWebhookTarget
-- EvidenceRouter
+- Index
 - enum
 - OpenAPI Contract
 - enum
@@ -184,11 +184,11 @@
 - Source Registration Schema
 - Retention Policy Enum
 - Trust Level Enum
-- networkPolicy
+- ingress
 - required
 - Runbook: Restore
 - Deploy Context Fabric — starter Compose (production)
-- .Authenticate
+- APIKeyResolver
 - ADR 0013: Knowledge-Graph-First
 - required
 - Purpose Allowlist Schema
@@ -232,11 +232,11 @@
 - Revision ID Schema Field
 - enum
 - visibility_ref
-- net/http.Client
-- required
+- synthetic/connector.go
+- webhookSigning
 - Runbook: backup and restore
 - Model ID Schema Field
-- properties
+- NewLegalHoldStore
 - Created At Schema Field
 - allowed_actions
 - source_revision
@@ -279,10 +279,8 @@
 - restore.sh
 - Secrets Schema Definition
 - Context Fabric Repository
-- service.go
 - validate-contracts.sh
 - validate-profiles.sh
-- endpoint
 - Helm values.yaml (scaled profile)
 - ADR 0016: Compose-first production release
 - Runbook: AuthZ outbox backlog
@@ -290,23 +288,14 @@
 - Runbook: OpenFGA outage
 - Runbook: `/health/ready` returns false
 - Context Fabric Threat Model (STRIDE)
-- openfga
 - Skill: decision-diagnosis
-- time.Duration
 - upgrade.sh
 - GraphEdge
-- Record
-- runner_test.go
 - compose-smoke.sh
 - compose-starter-preflight.sh
-- SourceRegistration
-- properties
-- image
-- pullPolicy
-- allowSkipHMAC
+- jobSpec
 - NewEventID
-- enum
-- TestWebhookEventHasNoContentFields
+- newP1Svc
 - tags
 
 ## God Nodes (most connected - your core abstractions)
@@ -351,15 +340,15 @@
 - **Deployment profile configs implementing profile schema (ADR 0002/0003)** — deploy_profiles_scaled, deploy_profiles_starter, deploy_profiles_xsama, docs_adr_0002_deployment_profiles, docs_adr_0003_bundled_vs_external_infra [INFERRED 0.80]
 - **One-image deployment profiles (demo/compose/helm/coolify)** — deploy_profiles_demo, deploy_compose_docker_compose, deploy_compose_docker_compose_minimal, deploy_helm_context_fabric_values, deploy_coolify_readme [INFERRED 0.85]
 
-## Communities (293 total, 17 thin omitted)
+## Communities (282 total, 17 thin omitted)
 
 ### Community 0 - "Server"
 Cohesion: 0.06
-Nodes (54): mapPacket, bufio.ReadWriter, encoding/json.RawMessage, net.Conn, net/http.Handler, net/http.HandlerFunc, net/http.PushOptions, net/http.Request (+46 more)
+Nodes (56): mapPacket, bufio.ReadWriter, encoding/json.RawMessage, net.Conn, net/http.Handler, net/http.HandlerFunc, net/http.PushOptions, net/http.Request (+48 more)
 
 ### Community 1 - "Manifest"
-Cohesion: 0.23
-Nodes (15): AuthzTupleManifest, ContentEntry, EvidenceRef, Job, Tombstone, runExportRoundTrip(), collectEvidenceRefs(), entry() (+7 more)
+Cohesion: 0.24
+Nodes (14): AuthzTupleManifest, ContentEntry, EvidenceRef, Job, Tombstone, collectEvidenceRefs(), entry(), Manifest (+6 more)
 
 ### Community 2 - "mapping.go"
 Cohesion: 0.10
@@ -374,48 +363,48 @@ Cohesion: 0.08
 Nodes (28): ADR-0006, RFC-9728, AccessRequestBody, BriefRequest, Citation, ClientOptions, ContextFabricClient, ContextFabricError (+20 more)
 
 ### Community 5 - "Service"
-Cohesion: 0.11
-Nodes (16): Durability, FeedStore, PublicEvent, deliveredAt(), NewWebhookStore(), eventMatches(), generateSubscriptionSecret(), DeliveryAttempt (+8 more)
+Cohesion: 0.12
+Nodes (15): Durability, FeedStore, PublicEvent, deliveredAt(), NewWebhookStore(), eventMatches(), generateSubscriptionSecret(), DeliveryAttempt (+7 more)
 
 ### Community 6 - "properties"
-Cohesion: 0.12
-Nodes (16): pattern, type, additionalProperties, properties, required, type, repository, tag (+8 more)
+Cohesion: 0.09
+Nodes (23): pattern, type, additionalProperties, properties, required, type, Always, IfNotPresent (+15 more)
 
 ### Community 7 - "Store"
 Cohesion: 0.10
-Nodes (16): github.com/jackc/pgx/v5/pgxpool.Pool, NewLegalHoldStore(), coalesceTime(), Connect(), firstNonEmpty(), pgx.Tx, mustJSON(), mustPgTx() (+8 more)
+Nodes (15): github.com/jackc/pgx/v5/pgxpool.Pool, coalesceTime(), Connect(), firstNonEmpty(), pgx.Tx, mustJSON(), mustPgTx(), NewStore() (+7 more)
 
 ### Community 8 - "Memory"
-Cohesion: 0.11
-Nodes (17): ConsistencyPreference(), firstNonEmpty(), formatObject(), formatUser(), mapRelation(), NewFromEnv(), reason(), TestConsistencyPreferenceMapping() (+9 more)
+Cohesion: 0.09
+Nodes (24): authorizationFixture, ConsistencyPreference(), firstNonEmpty(), formatObject(), formatUser(), mapRelation(), NewFromEnv(), reason() (+16 more)
 
 ### Community 9 - "ApplicationService"
-Cohesion: 0.10
-Nodes (5): VersionInfo, ApplicationService, redactSource(), RequireOrg(), Credentials
+Cohesion: 0.08
+Nodes (16): ChangeLister, ExportJobStore, ExtraStore, GraphRequest, IntakeRequest, MappingStore, memoryAuthzSeeder, QuotaStore (+8 more)
 
 ### Community 10 - ".Search"
-Cohesion: 0.15
-Nodes (23): Citation, GraphEdge, GraphNode, Citation, ContextPacket, GraphNode, allowedResourceIDs(), contains() (+15 more)
+Cohesion: 0.14
+Nodes (25): Citation, GraphEdge, GraphNode, IsTombstoned(), Inc(), Citation, ContextPacket, GraphNode (+17 more)
 
-### Community 11 - "context.Context"
-Cohesion: 0.12
-Nodes (10): jetStreamFetcher, noopBus, noopSub, outboxPayload, Worker, context.Context, sync.WaitGroup, Store (+2 more)
+### Community 11 - "Worker"
+Cohesion: 0.21
+Nodes (6): Worker, sync.WaitGroup, RunWorker(), EnqueueForEdge(), NeedsSynchronization(), ResourceObject()
 
 ### Community 12 - "CLI Commands"
 Cohesion: 0.15
 Nodes (24): baseURL(), cmdAgent(), cmdConformance(), cmdDiagnose(), cmdDoctor(), cmdOps(), cmdSandbox(), cmdSource() (+16 more)
 
 ### Community 13 - "testing.T"
-Cohesion: 0.10
-Nodes (24): testing.T, TestListEdgesOrdersBeforeApplyingLimit(), TestBatchCheckPutsConsistencyOnRequest(), app.ApplicationService, newP1Svc(), TestIntakeBatch(), TestOpsLagDoesNotClaimOutbox(), TestRegisterSourceRequireOrgDeny() (+16 more)
+Cohesion: 0.09
+Nodes (30): testing.T, TestListEdgesOrdersBeforeApplyingLimit(), TestBatchCheckPutsConsistencyOnRequest(), TestLocalAgentRole(), TestLocalAuthenticate(), TestLocalDiscover(), TestLocalRejectsMalformed(), TestEnqueueForEdgeCreatesParentTupleOperation() (+22 more)
 
-### Community 14 - "NewStore"
-Cohesion: 0.16
-Nodes (26): NewEvidence(), NewIndex(), NewStore(), TestTenantIsolation(), NewMemory(), TestRequireIngestNeedsScope(), TestRequireManageDeniedWithoutScope(), changeItemCount() (+18 more)
+### Community 14 - "wire"
+Cohesion: 0.15
+Nodes (30): app.ApplicationService, wire(), NewEvidence(), NewIndex(), NewStore(), TestTenantIsolation(), NewMemory(), TestRequireIngestNeedsScope() (+22 more)
 
 ### Community 15 - ".Intake"
-Cohesion: 0.24
-Nodes (12): Result, CheckReplayWindow(), defaultSpec(), deterministicEdgeID(), firstNonEmpty(), IntakeService, Request, isSourceOfTruth() (+4 more)
+Cohesion: 0.12
+Nodes (22): Result, asRelationshipWriter(), CheckReplayWindow(), defaultSpec(), deterministicEdgeID(), firstNonEmpty(), IntakeService, Request (+14 more)
 
 ### Community 16 - "enum"
 Cohesion: 0.07
@@ -425,25 +414,25 @@ Nodes (31): required, enum, config, jetstream_persistence, openfga_store, pgvect
 Cohesion: 0.17
 Nodes (20): ADR 0015: Sparse-first recall, AuthZ can_read BatchCheck, context.brief tool, context.get tool, context.graph tool, context.request_access tool, context.search tool, OpenAPI Specification (+12 more)
 
-### Community 18 - "ports.go"
-Cohesion: 0.14
-Nodes (16): ChangeAppender, CompletionManifest, DerivativeRef, LegalHoldChecker, Request, Service, IsTombstoned(), splitEvidenceRef() (+8 more)
+### Community 18 - "Service"
+Cohesion: 0.28
+Nodes (8): ChangeAppender, CompletionManifest, DerivativeRef, LegalHoldChecker, Request, Service, splitEvidenceRef(), VerifySignature()
 
 ### Community 19 - "oidc.go"
 Cohesion: 0.16
 Nodes (15): jwk, jwksDoc, jwtHeader, OIDCProvider, crypto/ecdsa.PublicKey, crypto/rsa.PublicKey, audienceContains(), claimInt64() (+7 more)
 
 ### Community 20 - "suite.go"
-Cohesion: 0.17
-Nodes (19): Case, caseFn, Report, Result, RunOptions, Suite, boolPtr(), DefaultSuitePath() (+11 more)
+Cohesion: 0.16
+Nodes (17): Case, caseFn, Report, Result, RunOptions, Suite, boolPtr(), DefaultSuitePath() (+9 more)
 
 ### Community 21 - "properties"
 Cohesion: 0.09
 Nodes (23): description, type, format, type, type, minLength, type, const (+15 more)
 
 ### Community 22 - "config.go"
-Cohesion: 0.12
-Nodes (23): ConnectionMode, MCPConfig, OIDCConfig, OpenFGAConfig, PostgresConfig, Profile, Runtime, S3Config (+15 more)
+Cohesion: 0.16
+Nodes (20): ConnectionMode, OIDCConfig, OpenFGAConfig, PostgresConfig, Profile, S3Config, boolEnv(), defaultMode() (+12 more)
 
 ### Community 23 - "properties"
 Cohesion: 0.10
@@ -453,9 +442,9 @@ Nodes (21): const, type, maxLength, type, minLength, type, minLength, type (+13 
 Cohesion: 0.07
 Nodes (29): $ref, $ref, format, type, maxLength, type, maxLength, minLength (+21 more)
 
-### Community 25 - "Store"
-Cohesion: 0.08
-Nodes (6): Store, AuthzTupleOp, DelegationGrant, OutboxEntry, Quota, Revision
+### Community 25 - "context.Context"
+Cohesion: 0.05
+Nodes (18): context.Context, time.Time, Store, Store, ErrNotFound(), AuthzTupleOp, DelegationGrant, IdempotencyRecord (+10 more)
 
 ### Community 26 - "Context Packet Schema"
 Cohesion: 0.08
@@ -471,7 +460,7 @@ Nodes (17): additionalProperties, properties, required, type, minLength, type, d
 
 ### Community 29 - "properties"
 Cohesion: 0.10
-Nodes (26): properties, audience, database, domain, host, issuer, port, required (+18 more)
+Nodes (26): properties, audience, buckets, domain, endpoint, issuer, region, required (+18 more)
 
 ### Community 30 - "properties"
 Cohesion: 0.09
@@ -481,17 +470,17 @@ Nodes (36): description, type, type, type, $ref, type, $ref, default (+28 more)
 Cohesion: 0.09
 Nodes (22): openapi-typescript, dist, README.md, src, description, devDependencies, openapi-typescript, typescript (+14 more)
 
-### Community 32 - "wire"
-Cohesion: 0.16
-Nodes (27): asRelWriter(), bootstrapOpenFGA(), firstEnv(), firstNonEmpty(), app.ApplicationService, locateOpsScript(), main(), newS3Evidence() (+19 more)
+### Community 32 - "context-fabric/main.go"
+Cohesion: 0.14
+Nodes (26): OIDCConfig, asRelWriter(), bootstrapOpenFGA(), durationEnv(), firstEnv(), firstNonEmpty(), httpServerConfigFromEnv(), intEnv() (+18 more)
 
 ### Community 33 - "replay_window_seconds"
 Cohesion: 0.12
 Nodes (16): type, key_id, replay_window_seconds, secret_ref, signing, default, maximum, minimum (+8 more)
 
 ### Community 34 - "Bus"
-Cohesion: 0.16
-Nodes (16): Connect(), ConnectConfig(), ConnectOrNoop(), credentialsFilePath(), defaultConnectOptions(), newBus(), NewNoop(), EventBus (+8 more)
+Cohesion: 0.08
+Nodes (24): jetStreamFetcher, noopBus, noopSub, outboxPayload, Connect(), ConnectConfig(), ConnectOrNoop(), credentialsFilePath() (+16 more)
 
 ### Community 35 - "required"
 Cohesion: 0.17
@@ -502,8 +491,8 @@ Cohesion: 0.17
 Nodes (12): type, properties, context_space_id, resource_id, revision_id, schema_version, minLength, type (+4 more)
 
 ### Community 37 - "properties"
-Cohesion: 0.14
-Nodes (16): minLength, type, items, type, properties, required, host, hosts (+8 more)
+Cohesion: 0.15
+Nodes (16): type, minLength, type, items, type, properties, properties, type (+8 more)
 
 ### Community 38 - "chatwoot/connector.go"
 Cohesion: 0.27
@@ -514,20 +503,20 @@ Cohesion: 0.14
 Nodes (14): organization_id, retention_policy_id, source_id, status, required, allowed_record_types, authority_ceiling, classification_default (+6 more)
 
 ### Community 40 - "AgentCredential"
-Cohesion: 0.23
-Nodes (8): randomSecret(), NewCredentialStore(), randomSecret(), AgentCredential, CreateAgentCredentialRequest, agentCred, CredentialStore, CredentialStore
+Cohesion: 0.18
+Nodes (10): sync.RWMutex, randomSecret(), NewCredentialStore(), randomSecret(), AgentCredential, AgentPrincipal, CreateAgentCredentialRequest, agentCred (+2 more)
 
 ### Community 41 - "ErrUnavailable"
-Cohesion: 0.21
-Nodes (14): AgentClaims, APIKeyResolver, NewAPIKeyResolver(), baseErr(), ErrConflict(), ErrForbidden(), ErrRateLimited(), ErrUnauthorized() (+6 more)
+Cohesion: 0.42
+Nodes (9): baseErr(), ErrConflict(), ErrForbidden(), ErrRateLimited(), ErrUnauthorized(), ErrUnavailable(), TestAPIErrorHelpers(), TestErrRateLimitedRetryAfter() (+1 more)
 
-### Community 42 - "time.Time"
-Cohesion: 0.09
-Nodes (8): time.Time, ErrNotFound(), IdempotencyRecord, Organization, PresignOptions, AccessRequest, ExportJob, WebhookSubscription
+### Community 42 - "EvidenceRouter"
+Cohesion: 0.11
+Nodes (13): harness, github.com/aws/aws-sdk-go-v2/service/s3.Client, github.com/aws/aws-sdk-go-v2/service/s3.PresignClient, io.ReadCloser, io.Reader, EvidenceStore, HashBody(), EvidenceObject (+5 more)
 
 ### Community 43 - "Principal"
-Cohesion: 0.22
-Nodes (8): ApplicationService, hasScope(), isPlatformAdmin(), platformBootstrapToken(), scopesOf(), validPlatformBootstrap(), Principal, searchOnlyIdentity
+Cohesion: 0.17
+Nodes (13): ApplicationService, hasScope(), isPlatformAdmin(), platformBootstrapToken(), scopesOf(), validPlatformBootstrap(), principalSubject(), seedMemoryAuthzOrg() (+5 more)
 
 ### Community 44 - "required"
 Cohesion: 0.15
@@ -550,8 +539,8 @@ Cohesion: 0.11
 Nodes (18): minimum, type, minimum, type, default, maximum, minimum, type (+10 more)
 
 ### Community 49 - "properties"
-Cohesion: 0.11
-Nodes (18): additionalProperties, properties, required, type, items, minItems, type, uniqueItems (+10 more)
+Cohesion: 0.10
+Nodes (21): additionalProperties, properties, required, type, items, minItems, type, uniqueItems (+13 more)
 
 ### Community 50 - "$defs"
 Cohesion: 0.11
@@ -598,8 +587,8 @@ Cohesion: 0.10
 Nodes (20): minLength, type, type, type, oidcDependency, format, type, format (+12 more)
 
 ### Community 61 - "existingSecret"
-Cohesion: 0.14
-Nodes (14): minLength, type, minLength, type, existingSecret, key, secrets, webhookSigning (+6 more)
+Cohesion: 0.29
+Nodes (7): minLength, type, minLength, type, existingSecret, key, properties
 
 ### Community 62 - "OIDC Client Config Alt"
 Cohesion: 0.12
@@ -622,8 +611,8 @@ Cohesion: 0.12
 Nodes (16): additionalProperties, properties, type, default, type, default, type, default (+8 more)
 
 ### Community 67 - "enum"
-Cohesion: 0.32
-Nodes (8): enum, description, enum, type, owner, operator, platform, shared
+Cohesion: 0.60
+Nodes (5): enum, enum, operator, platform, shared
 
 ### Community 68 - "enum"
 Cohesion: 0.18
@@ -658,8 +647,8 @@ Cohesion: 0.17
 Nodes (12): type, minLength, type, type, type, properties, adminPasswordKey, database (+4 more)
 
 ### Community 76 - "NewLimiter"
-Cohesion: 0.24
-Nodes (10): DefaultLimits(), Limiter, NewLimiter(), TestLimiterOperations(), TestLimiterRateLimits(), TestLimiterScopesSeparately(), bucket, Key (+2 more)
+Cohesion: 0.25
+Nodes (9): Limiter, NewLimiter(), TestLimiterOperations(), TestLimiterRateLimits(), TestLimiterScopesSeparately(), bucket, Key, Limits (+1 more)
 
 ### Community 77 - "items"
 Cohesion: 0.13
@@ -678,8 +667,8 @@ Cohesion: 0.14
 Nodes (14): const, type, format, type, type, pattern, type, properties (+6 more)
 
 ### Community 81 - "serviceAccount"
-Cohesion: 0.20
-Nodes (10): type, type, create, name, serviceAccount, additionalProperties, properties, required (+2 more)
+Cohesion: 0.14
+Nodes (14): type, additionalProperties, type, type, type, annotations, create, name (+6 more)
 
 ### Community 82 - "properties"
 Cohesion: 0.18
@@ -689,9 +678,9 @@ Nodes (11): properties, type, type, type, jetstream_persistence, openfga_store, 
 Cohesion: 0.18
 Nodes (11): lifecycle_state, occurred_at, organization_id, resource_id, revision_id, schema_version, required, change_type (+3 more)
 
-### Community 84 - "probe"
-Cohesion: 0.14
-Nodes (14): probe, minimum, type, path, minLength, type, minimum, type (+6 more)
+### Community 84 - "properties"
+Cohesion: 0.20
+Nodes (10): minimum, type, minLength, type, minimum, type, properties, failureThreshold (+2 more)
 
 ### Community 85 - "properties"
 Cohesion: 0.15
@@ -737,9 +726,9 @@ Nodes (13): maximum, minimum, type, port, service, type, properties, type (+5 mo
 Cohesion: 0.15
 Nodes (13): type, public_surface, roles, description, items, minItems, type, items (+5 more)
 
-### Community 96 - "Load"
-Cohesion: 0.22
-Nodes (13): boolEnv(), Load(), LoadBase(), secretValue(), TestLoadBaseSkipsRuntimeDeps(), TestLoadRejectsPlaceholderSecrets(), TestSecretValueFromFile(), TestSecretValueMissingFileFallsBackToEnv() (+5 more)
+### Community 96 - "Config"
+Cohesion: 0.20
+Nodes (10): requireDeletionSigningSecret(), requireWebhookSigningSecret(), webhookSigningSecret(), MCPConfig, Runtime, Secrets, Config, IsPlaceholderValue() (+2 more)
 
 ### Community 97 - "TypeScript Compiler Config"
 Cohesion: 0.15
@@ -777,9 +766,9 @@ Nodes (14): enum, type, type, minLength, type, bundled, external, properties (+6
 Cohesion: 0.17
 Nodes (12): minLength, type, properties, memory, domain, replicas, storage, minimum (+4 more)
 
-### Community 106 - "properties"
-Cohesion: 0.17
-Nodes (12): properties, minLength, type, type, maximum, minimum, type, host (+4 more)
+### Community 106 - "endpoint"
+Cohesion: 0.11
+Nodes (18): endpoint, additionalProperties, properties, required, type, minLength, type, host (+10 more)
 
 ### Community 107 - "setup"
 Cohesion: 0.42
@@ -813,13 +802,13 @@ Nodes (12): description, items, type, uniqueItems, enum, type, source:, controll
 Cohesion: 0.18
 Nodes (11): type, minLength, type, properties, type, properties, apiTokenKey, apiUrl (+3 more)
 
-### Community 115 - "type"
-Cohesion: 0.18
-Nodes (11): enum, type, serve, properties, type, type, network, privateDependencies (+3 more)
+### Community 115 - "required"
+Cohesion: 0.12
+Nodes (16): enum, config, dependencies, profile, serve, worker, properties, type (+8 more)
 
 ### Community 116 - "enum"
-Cohesion: 0.22
-Nodes (11): required, enum, nats, oidc, postgres, s3, enum, enum (+3 more)
+Cohesion: 0.09
+Nodes (26): required, description, enum, type, nats, oidc, openfga, postgres (+18 more)
 
 ### Community 117 - "required"
 Cohesion: 0.18
@@ -845,9 +834,9 @@ Nodes (9): description, type, null, object, string, brand_id, supersedes_revisio
 Cohesion: 0.14
 Nodes (14): items, minItems, type, uniqueItems, items, enum, type, artifact (+6 more)
 
-### Community 123 - "properties"
-Cohesion: 0.18
-Nodes (11): type, additionalProperties, type, type, additionalProperties, properties, required, type (+3 more)
+### Community 123 - "newS3Evidence"
+Cohesion: 0.22
+Nodes (10): newS3Evidence(), Config, evidenceTier(), NewRouter(), TestEvidenceTier(), withBucket(), MaxBytesFromEnv(), New() (+2 more)
 
 ### Community 124 - "database"
 Cohesion: 0.27
@@ -858,8 +847,8 @@ Cohesion: 0.12
 Nodes (16): type, version, additionalProperties, properties, required, type, maxLength, minLength (+8 more)
 
 ### Community 126 - "jetstream"
-Cohesion: 0.25
-Nodes (8): additionalProperties, description, required, type, domain, jetstream, replicas, storage
+Cohesion: 0.14
+Nodes (14): enum, additionalProperties, description, enum, required, type, domain, jetstream (+6 more)
 
 ### Community 127 - "Change Event Schema"
 Cohesion: 0.22
@@ -890,16 +879,16 @@ Cohesion: 0.22
 Nodes (9): $ref, properties, type, liveness, probes, readiness, startup, $ref (+1 more)
 
 ### Community 134 - "properties"
-Cohesion: 0.15
-Nodes (13): additionalProperties, properties, type, type, $ref, $ref, $ref, dependencies (+5 more)
+Cohesion: 0.11
+Nodes (19): additionalProperties, properties, type, type, $ref, $ref, description, enum (+11 more)
 
 ### Community 135 - "Auth Credential Tests"
 Cohesion: 0.39
 Nodes (7): NewCredentialStore(), TestRevokeIsOrgScoped(), TestChainedAPIKeyBearerAuthenticates(), TestChainedAPIKeyHeaderField(), TestChainedLocalTokenStillWorks(), TestChainedRejectsUnknownKey(), WithAPIKeys()
 
 ### Community 136 - "required"
-Cohesion: 0.25
-Nodes (8): openfga, additionalProperties, required, type, persistence, evidence, jetstream, ledger
+Cohesion: 0.20
+Nodes (10): required, database, host, port, required, type, postgres, hosts (+2 more)
 
 ### Community 137 - "required"
 Cohesion: 0.22
@@ -958,8 +947,8 @@ Cohesion: 0.46
 Nodes (7): loadPreds(), loadTasks(), main(), percentile(), setOf(), prediction, task
 
 ### Community 151 - "types.go"
-Cohesion: 0.10
-Nodes (17): LedgerLogger, LedgerWriter, MemoryLogger, Logger, sanitize(), rank(), AuditEvent, InboxEntry (+9 more)
+Cohesion: 0.15
+Nodes (11): rank(), AuditEvent, IntakeEvent, MappingSpec, PolicyEval, PolicyResult, PrincipalKind, Provider (+3 more)
 
 ### Community 152 - "OpenAPI Generation Script"
 Cohesion: 0.25
@@ -986,8 +975,8 @@ Cohesion: 0.25
 Nodes (8): id, source, required, data, datacontenttype, specversion, time, type
 
 ### Community 158 - "properties"
-Cohesion: 0.13
-Nodes (15): type, properties, Always, IfNotPresent, Never, digest, pullPolicy, repository (+7 more)
+Cohesion: 0.09
+Nodes (22): type, additionalProperties, properties, required, type, Always, IfNotPresent, Never (+14 more)
 
 ### Community 159 - "export-manifest.json"
 Cohesion: 0.13
@@ -997,9 +986,9 @@ Nodes (14): additionalProperties, description, $id, organization_id, status, req
 Cohesion: 0.33
 Nodes (7): net.IP, isBlockedHost(), isBlockedIP(), TestValidateWebhookTargetBlocksLoopback(), TestValidateWebhookTargetBlocksMetadata(), TestValidateWebhookTargetHTTPSRequired(), ValidateWebhookTarget()
 
-### Community 161 - "EvidenceRouter"
-Cohesion: 0.05
-Nodes (38): Config, harness, github.com/aws/aws-sdk-go-v2/service/s3.Client, github.com/aws/aws-sdk-go-v2/service/s3.PresignClient, io.ReadCloser, io.Reader, sync.RWMutex, EvidenceStore (+30 more)
+### Community 161 - "Index"
+Cohesion: 0.12
+Nodes (16): classRank(), Index, matchFilters(), attr(), classRank(), pgx.Tx, isMissingFTSColumn(), itoa() (+8 more)
 
 ### Community 162 - "enum"
 Cohesion: 0.29
@@ -1029,9 +1018,9 @@ Nodes (7): retention, enum, type, 24m, 30d, indefinite_policy, legal_hold
 Cohesion: 0.29
 Nodes (7): trust, enum, type, generated, trusted_internal, trusted_system, untrusted_external
 
-### Community 169 - "networkPolicy"
-Cohesion: 0.13
-Nodes (16): type, $defs, jobSpec, roleWorkload, required, type, enabled, additionalProperties (+8 more)
+### Community 169 - "ingress"
+Cohesion: 0.17
+Nodes (12): type, additionalProperties, required, type, enabled, additionalProperties, properties, required (+4 more)
 
 ### Community 170 - "required"
 Cohesion: 0.25
@@ -1045,9 +1034,9 @@ Nodes (11): Data integrity checks, Diagnosis, Remediation, Runbook: Postgres rec
 Cohesion: 0.22
 Nodes (9): Architecture, CI parity, Deploy Context Fabric — starter Compose (production), Image promotion, Operations, Prerequisites, Quick start, Related (+1 more)
 
-### Community 173 - ".Authenticate"
-Cohesion: 0.38
-Nodes (3): Chained, looksLikeJWT(), IdentityProvider
+### Community 173 - "APIKeyResolver"
+Cohesion: 0.22
+Nodes (7): AgentClaims, APIKeyResolver, Chained, NewAPIKeyResolver(), looksLikeJWT(), CredentialProvider, IdentityProvider
 
 ### Community 174 - "ADR 0013: Knowledge-Graph-First"
 Cohesion: 0.30
@@ -1086,12 +1075,12 @@ Cohesion: 0.22
 Nodes (9): properties, type, minLength, type, minLength, type, indexBackend, listenAddr (+1 more)
 
 ### Community 183 - "values.schema.json"
-Cohesion: 0.17
-Nodes (11): additionalProperties, $id, config, dependencies, profile, worker, required, $schema (+3 more)
+Cohesion: 0.13
+Nodes (14): additionalProperties, $defs, probe, roleWorkload, $id, path, required, type (+6 more)
 
 ### Community 184 - "metrics.go"
-Cohesion: 0.17
-Nodes (21): sync/atomic.Int64, Add(), copyLabeled(), copyStringMap(), formatLabels(), Get(), Handler(), Inc() (+13 more)
+Cohesion: 0.18
+Nodes (20): sync/atomic.Int64, Add(), copyLabeled(), copyStringMap(), formatLabels(), Get(), Handler(), incLabeled() (+12 more)
 
 ### Community 185 - "Runbook: upgrade and rollback"
 Cohesion: 0.22
@@ -1110,8 +1099,8 @@ Cohesion: 0.25
 Nodes (8): additionalProperties, required, type, capabilities, config, listenAddr, logLevel, openfgaModelId
 
 ### Community 189 - "migrate.go"
-Cohesion: 0.46
-Nodes (7): Bootstrap(), CheckApplied(), loadEmbedded(), loadMigrations(), Run(), migrationFile, Options
+Cohesion: 0.30
+Nodes (11): runBootstrap(), runMigrate(), AdminDSN(), Bootstrap(), CheckApplied(), loadEmbedded(), loadMigrations(), MigrationsDir() (+3 more)
 
 ### Community 190 - "Purpose Allowlist Schema"
 Cohesion: 0.40
@@ -1221,13 +1210,13 @@ Nodes (6): active, revoked, status, enum, type, expired
 Cohesion: 0.50
 Nodes (4): visibility_ref, description, minLength, type
 
-### Community 217 - "net/http.Client"
-Cohesion: 0.33
-Nodes (8): OIDCConfig, net/http.Client, DefaultHTTPClient(), env(), New(), RunCLI(), Config, Connector
+### Community 217 - "synthetic/connector.go"
+Cohesion: 0.57
+Nodes (5): env(), New(), RunCLI(), Config, Connector
 
-### Community 218 - "required"
-Cohesion: 0.33
-Nodes (6): buckets, endpoint, region, s3, required, type
+### Community 218 - "webhookSigning"
+Cohesion: 0.29
+Nodes (7): secrets, webhookSigning, additionalProperties, properties, type, additionalProperties, type
 
 ### Community 219 - "Runbook: backup and restore"
 Cohesion: 0.29
@@ -1236,10 +1225,6 @@ Nodes (7): Backup procedure, Quarterly drill, Related, Restore procedure, RPO / 
 ### Community 220 - "Model ID Schema Field"
 Cohesion: 0.50
 Nodes (4): description, minLength, type, model_id
-
-### Community 221 - "properties"
-Cohesion: 0.29
-Nodes (7): description, type, description, type, properties, evidence, ledger
 
 ### Community 222 - "Created At Schema Field"
 Cohesion: 0.67
@@ -1369,14 +1354,6 @@ Nodes (6): enum, type, method, ed25519, hmac_sha256, oidc_jwt
 Cohesion: 0.50
 Nodes (4): additionalProperties, type, type, dependencies
 
-### Community 264 - "service.go"
-Cohesion: 0.13
-Nodes (18): ChangeLister, ExportJobStore, ExtraStore, GraphRequest, IntakeRequest, MappingStore, memoryAuthzSeeder, QuotaStore (+10 more)
-
-### Community 267 - "endpoint"
-Cohesion: 0.33
-Nodes (6): endpoint, additionalProperties, required, type, host, port
-
 ### Community 268 - "Helm values.yaml (scaled profile)"
 Cohesion: 0.43
 Nodes (7): Helm Chart.yaml, Helm ConfigMap Template, Helm Deployment Template (serve/worker), Helm Job Template (migrate/bootstrap), Helm PodDisruptionBudget Template, Helm Service Template, Helm values.yaml (scaled profile)
@@ -1405,57 +1382,25 @@ Nodes (6): Common causes, Escalation, Immediate checks, Related, Runbook: `/heal
 Cohesion: 0.40
 Nodes (5): OpenFGA Authorization Model, Upgrade Order, Connector Conformance Suite, Plugin Authoring Guide, Context Fabric Threat Model (STRIDE)
 
-### Community 275 - "openfga"
-Cohesion: 0.33
-Nodes (6): description, enum, $ref, type, openfga, store_and_tuples
-
 ### Community 276 - "Skill: decision-diagnosis"
 Cohesion: 0.67
 Nodes (4): ContextPacket, Skill: decision-diagnosis, Chatwoot MappingSpec (map_chatwoot_messages), OpenFGA authorization system
-
-### Community 277 - "time.Duration"
-Cohesion: 0.17
-Nodes (11): durationEnv(), httpServerConfigFromEnv(), intEnv(), httpServerConfig, sync.Mutex, time.Duration, headerMap(), EventMessage (+3 more)
 
 ### Community 278 - "upgrade.sh"
 Cohesion: 0.67
 Nodes (3): GONTEXT_IMAGE, upgrade.sh script, usage()
 
-### Community 279 - "GraphEdge"
-Cohesion: 0.21
-Nodes (5): EnqueueForEdge(), NeedsSynchronization(), ResourceObject(), EdgeListOptions, GraphEdge
-
-### Community 281 - "runner_test.go"
-Cohesion: 0.46
-Nodes (7): authorizationFixture, evaluateFixture(), fixturesDir(), principalKind(), seedSampleTuples(), stripPrefix(), TestAuthorizationFixturesAllowDenyMatrix()
-
-### Community 285 - "properties"
-Cohesion: 0.29
-Nodes (7): minimum, type, properties, backoffLimit, ttlSecondsAfterFinished, minimum, type
-
-### Community 286 - "image"
-Cohesion: 0.29
-Nodes (7): additionalProperties, required, type, repository, tag, image, pullPolicy
-
-### Community 287 - "pullPolicy"
-Cohesion: 0.29
-Nodes (7): Always, IfNotPresent, Never, pullPolicy, default, enum, type
-
-### Community 288 - "allowSkipHMAC"
-Cohesion: 0.48
-Nodes (6): allowSkipHMAC(), TestSkipHMACAllowedDemoWithEnv(), TestSkipHMACAllowedMemoryWithEnv(), TestSkipHMACHeaderIgnoredWithoutAllow(), TestSkipHMACRejectedByDefault(), TestSkipHMACRejectedOutsideDemo()
+### Community 285 - "jobSpec"
+Cohesion: 0.20
+Nodes (10): minimum, type, jobSpec, properties, required, type, backoffLimit, ttlSecondsAfterFinished (+2 more)
 
 ### Community 289 - "NewEventID"
-Cohesion: 0.62
-Nodes (6): TestNewIDs(), NewArtifactID(), NewEventID(), NewResourceID(), NewRevisionID(), newTimedID()
+Cohesion: 0.20
+Nodes (12): LedgerLogger, LedgerWriter, MemoryLogger, sync.Mutex, Logger, sanitize(), TestNewIDs(), NewArtifactID() (+4 more)
 
-### Community 290 - "enum"
-Cohesion: 0.33
-Nodes (6): enum, enum, degraded_read_only, fail_closed, rebuild_from_outbox, snapshot
-
-### Community 291 - "TestWebhookEventHasNoContentFields"
-Cohesion: 0.50
-Nodes (3): HasContentFields(), TestWebhookDuplicateAndDLQ(), TestWebhookEventHasNoContentFields()
+### Community 291 - "newP1Svc"
+Cohesion: 0.19
+Nodes (14): app.ApplicationService, newP1Svc(), TestIntakeBatch(), TestOpsLagDoesNotClaimOutbox(), TestRegisterSourceRequireOrgDeny(), TestRequestAccessPersistsJustification(), TestRotateSource(), TestVerifySourceRequiresSecret() (+6 more)
 
 ## Ambiguous Edges - Review These
 - `Context Fabric Historical Reference Architecture` → `ADR 0012: V1 Boundaries`  [AMBIGUOUS]
@@ -1471,15 +1416,15 @@ _Questions this graph is uniquely positioned to answer:_
 
 - **What is the exact relationship between `Context Fabric Historical Reference Architecture` and `ADR 0012: V1 Boundaries`?**
   _Edge tagged AMBIGUOUS (relation: references) - confidence is low._
-- **Why does `wire()` connect `wire` to `Server`, `EvidenceRouter`, `Bus`, `Service`, `Auth Credential Tests`, `Memory`, `AgentCredential`, `Store`, `NewOIDC`, `NewLimiter`, `NewStore`, `config.go`, `types.go`, `migrate.go`?**
-  _High betweenness centrality (0.012) - this node is a cross-community bridge._
-- **Why does `properties` connect `Helm Chart Template` to `dependencies`, `networkPolicy`, `serviceAccount`, `type`, `values.schema.json`, `enum`, `properties`, `required`, `existingSecret`, `image`?**
+- **Why does `wire()` connect `wire` to `context-fabric/main.go`, `Config`, `Bus`, `Index`, `NewEventID`, `Service`, `newP1Svc`, `Auth Credential Tests`, `Memory`, `AgentCredential`, `Store`, `NewOIDC`, `Server`, `NewLimiter`, `.Intake`, `migrate.go`, `newS3Evidence`, `NewLegalHoldStore`?**
+  _High betweenness centrality (0.013) - this node is a cross-community bridge._
+- **Why does `ApplicationService` connect `ApplicationService` to `Server`, `Manifest`, `NewEventID`, `mapping.go`, `Service`, `EvidenceRouter`, `Principal`, `NewLimiter`, `APIKeyResolver`, `.Search`, `.Intake`, `Service`, `context.Context`?**
   _High betweenness centrality (0.009) - this node is a cross-community bridge._
-- **Why does `ApplicationService` connect `ApplicationService` to `Server`, `EvidenceRouter`, `Manifest`, `mapping.go`, `Bus`, `Service`, `service.go`, `ErrUnavailable`, `.Search`, `context.Context`, `NewLimiter`, `.Authenticate`, `.Intake`, `ports.go`, `types.go`?**
+- **Why does `properties` connect `Helm Chart Template` to `dependencies`, `ingress`, `webhookSigning`, `serviceAccount`, `required`, `values.schema.json`, `enum`, `required`, `properties`?**
   _High betweenness centrality (0.009) - this node is a cross-community bridge._
 - **What connects `$schema`, `$id`, `title` to the rest of the system?**
   _1452 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Server` be split into smaller, more focused modules?**
-  _Cohesion score 0.06086059534335397 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.058403361344537816 - nodes in this community are weakly interconnected._
 - **Should `mapping.go` be split into smaller, more focused modules?**
   _Cohesion score 0.09898242368177614 - nodes in this community are weakly interconnected._
