@@ -104,6 +104,7 @@ services:
       OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
       OPENFGA_MODEL_PATH: /contracts/openfga/model.fga
       OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+      OPENFGA_MODEL_ID_FILE: /var/run/context-fabric/openfga_model_id
     volumes:
       - openfga_bootstrap:/var/run/context-fabric
     networks: !reset
@@ -135,6 +136,7 @@ services:
       OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN}
       OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
       OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+      OPENFGA_MODEL_ID_FILE: /var/run/context-fabric/openfga_model_id
       OIDC_ISSUER: ${OIDC_ISSUER}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID}
@@ -192,6 +194,7 @@ services:
       OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN}
       OPENFGA_STORE_ID_FILE: /var/run/context-fabric/openfga_store_id
       OPENFGA_MODEL_ID: ${OPENFGA_MODEL_ID}
+      OPENFGA_MODEL_ID_FILE: /var/run/context-fabric/openfga_model_id
       CAPABILITY_PGVECTOR: ${CAPABILITY_PGVECTOR:-true}
       CAPABILITY_JETSTREAM_PERSISTENCE: ${CAPABILITY_JETSTREAM_PERSISTENCE:-true}
       CAPABILITY_S3_VERSIONING: ${CAPABILITY_S3_VERSIONING:-true}

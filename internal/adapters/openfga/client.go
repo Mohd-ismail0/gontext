@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xsama/context-fabric/internal/config"
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
 )
@@ -36,6 +37,13 @@ func NewFromEnv() (*Client, error) {
 		}
 	}
 	model := firstNonEmpty(os.Getenv("OPENFGA_MODEL_ID"), os.Getenv("AUTHZ_MODEL_ID"))
+	if config.IsOpenFGAModelPlaceholder(model) {
+		if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
+			if b, err := os.ReadFile(path); err == nil {
+				model = strings.TrimSpace(string(b))
+			}
+		}
+	}
 	if api == "" || store == "" || model == "" {
 		return nil, fmt.Errorf("OPENFGA_API_URL, OPENFGA_STORE_ID, and OPENFGA_MODEL_ID are required")
 	}

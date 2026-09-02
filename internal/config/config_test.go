@@ -74,6 +74,18 @@ func TestSecretValuePrefersExistingFile(t *testing.T) {
 	}
 }
 
+func TestIsOpenFGAModelPlaceholder(t *testing.T) {
+	if !IsOpenFGAModelPlaceholder("starter-model-v1") {
+		t.Fatal("expected starter-model-v1 placeholder")
+	}
+	if !IsOpenFGAModelPlaceholder("demo-model-v1") {
+		t.Fatal("expected demo-model-v1 placeholder")
+	}
+	if IsOpenFGAModelPlaceholder("0123456789abcdef") {
+		t.Fatal("real model id should not be placeholder")
+	}
+}
+
 func TestLoadBaseSkipsRuntimeDeps(t *testing.T) {
 	t.Setenv("PROFILE", "starter")
 	t.Setenv("CONTEXT_FABRIC_MEMORY", "")

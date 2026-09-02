@@ -6,9 +6,9 @@
     "semantic_hash": "c7ea98208245cd0e4a2e82b3eae7010e"
   },
   "cmd/context-fabric/main.go": {
-    "mtime": 1788274216.9339066,
-    "seen": 1788274269.0614655,
-    "ast_hash": "bffc140e0293b2a6fce0024a1a2d1b8b",
+    "mtime": 1788356230.4483385,
+    "seen": 1788356340.992254,
+    "ast_hash": "208a2526ab3e2b266fdf62f3d44796d1",
     "semantic_hash": ""
   },
   "contracts/authorization-fixtures/agent-active-allow.json": {
@@ -384,9 +384,9 @@
     "semantic_hash": ""
   },
   "internal/config/config.go": {
-    "mtime": 1788274216.9349585,
-    "seen": 1788274269.0654619,
-    "ast_hash": "7e671284b483be94445660c861dc18aa",
+    "mtime": 1788359270.6636553,
+    "seen": 1788359283.1218522,
+    "ast_hash": "9036ce7d1cf172fbe4b134cbfec28499",
     "semantic_hash": ""
   },
   "internal/conformance/remote.go": {
@@ -1092,15 +1092,15 @@
     "semantic_hash": ""
   },
   "internal/config/config_test.go": {
-    "mtime": 1788272715.8601637,
-    "seen": 1788272871.717205,
-    "ast_hash": "a645da41742ca1eeea78127bb7278cc9",
+    "mtime": 1788359270.7276564,
+    "seen": 1788359283.1218522,
+    "ast_hash": "72a00761c9a8b28f3c727a4ce8a75622",
     "semantic_hash": ""
   },
   "scripts/compose-smoke.sh": {
-    "mtime": 1788329814.5807052,
-    "seen": 1788329994.2609231,
-    "ast_hash": "4258760a85ac5a623b1ec6060488998c",
+    "mtime": 1788356923.145406,
+    "seen": 1788359283.1238518,
+    "ast_hash": "6070007c1c482f07b437f767c59f6939",
     "semantic_hash": ""
   },
   "scripts/compose-starter-preflight.sh": {
@@ -1134,9 +1134,9 @@
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.starter.yaml": {
-    "mtime": 1788338154.1689012,
-    "seen": 1788338164.8418794,
-    "ast_hash": "65dd9770039d34a75aab37c248dafbb8",
+    "mtime": 1788356324.9875486,
+    "seen": 1788356341.013637,
+    "ast_hash": "e50cf75c9a4ecf89f88156929b92e9dd",
     "semantic_hash": ""
   },
   "deploy/compose/docker-compose.test.yaml": {

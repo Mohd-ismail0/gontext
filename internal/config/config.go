@@ -503,6 +503,16 @@ func IsPlaceholderValue(val string) bool {
 	return ok
 }
 
+// IsOpenFGAModelPlaceholder reports model pins that bootstrap should write and replace.
+func IsOpenFGAModelPlaceholder(id string) bool {
+	switch strings.TrimSpace(id) {
+	case "", "demo-model-v1", "starter-model-v1":
+		return true
+	default:
+		return false
+	}
+}
+
 // envFile returns the value of key, or the trimmed contents of key+"_FILE" when key is unset.
 func envFile(key string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {

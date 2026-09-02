@@ -10,6 +10,7 @@ services:
       - ./dex/config.yaml:/etc/dex/config.yaml:ro
     networks:
       gateway:
+      data:
     ports:
       - "5556:5556"
     healthcheck:
@@ -22,7 +23,7 @@ services:
   serve:
     environment:
       OIDC_ISSUER: http://dex:5556/dex
-      OIDC_AUDIENCE: context-fabric
+      OIDC_AUDIENCE: context-fabric-starter
       OIDC_CLIENT_ID: context-fabric-starter
       OIDC_CLIENT_SECRET: integration-dex-secret
       OIDC_DISCOVERY_URL: http://dex:5556/dex/.well-known/openid-configuration

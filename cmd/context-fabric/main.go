@@ -905,14 +905,14 @@ func runDoctor() error {
 		}
 		fmt.Println("doctor: openfga api token set")
 		modelID := strings.TrimSpace(firstEnv("OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID", ""))
-		if modelID == "" || modelID == "demo-model-v1" {
+		if config.IsOpenFGAModelPlaceholder(modelID) {
 			if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
 				if b, err := os.ReadFile(path); err == nil {
 					modelID = strings.TrimSpace(string(b))
 				}
 			}
 		}
-		if modelID == "" || modelID == "demo-model-v1" {
+		if config.IsOpenFGAModelPlaceholder(modelID) {
 			return fmt.Errorf("OPENFGA_MODEL_ID unset or placeholder; run bootstrap to write and pin a model")
 		}
 		fmt.Printf("doctor: openfga model pin=%s\n", modelID)
@@ -1014,7 +1014,7 @@ func bootstrapOpenFGA(ctx context.Context) error {
 	}
 
 	modelID := strings.TrimSpace(firstEnv("OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID", ""))
-	if modelID == "" || modelID == "demo-model-v1" {
+	if config.IsOpenFGAModelPlaceholder(modelID) {
 		written, err := openfgaWriteAuthorizationModel(ctx, client, api, store, modelJSONPath)
 		if err != nil {
 			return fmt.Errorf("write authorization model from %s: %w", modelJSONPath, err)
