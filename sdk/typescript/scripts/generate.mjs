@@ -21,11 +21,16 @@ if (!existsSync(openapi)) {
 
 mkdirSync(outDir, { recursive: true });
 
+// Pin the generator so regeneration is reproducible. It is intentionally NOT a
+// devDependency: its peer range currently pins TypeScript 5, which conflicts with
+// the SDK's TypeScript 7 build. The committed src/generated/openapi.ts is used by
+// the build; generation is an on-demand step.
+const GENERATOR = "openapi-typescript@7.13.0";
 const bin = join(here, "..", "node_modules", ".bin", "openapi-typescript");
 const cmd = existsSync(bin) ? bin : "npx";
 const args = existsSync(bin)
   ? [openapi, "-o", outFile]
-  : ["--yes", "openapi-typescript", openapi, "-o", outFile];
+  : ["--yes", GENERATOR, openapi, "-o", outFile];
 
 const r = spawnSync(cmd, args, { stdio: "inherit", shell: true });
 if (r.status !== 0) {
