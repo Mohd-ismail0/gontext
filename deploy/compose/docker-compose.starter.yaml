@@ -63,7 +63,7 @@ services:
   openfga:
     environment:
       OPENFGA_DATASTORE_ENGINE: postgres
-      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/openfga?sslmode=disable
+      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/openfga?sslmode=${POSTGRES_SSLMODE:-disable}
       OPENFGA_HTTP_ADDR: 0.0.0.0:8080
       OPENFGA_GRPC_ADDR: 0.0.0.0:8081
       OPENFGA_PLAYGROUND_ENABLED: "false"
@@ -83,8 +83,8 @@ services:
       CONTEXT_FABRIC_PROFILE: starter
       INDEX_BACKEND: postgres
       MIGRATIONS_DIR: /migrations
-      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
-      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}
     networks: !reset
       - data
 
@@ -99,8 +99,8 @@ services:
       CONTEXT_FABRIC_PROFILE: starter
       INDEX_BACKEND: postgres
       MIGRATIONS_DIR: /migrations
-      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
-      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}
       OPENFGA_API_URL: http://openfga:8080
       OPENFGA_API_TOKEN: ${OPENFGA_API_TOKEN}
       OPENFGA_STORE_ID: ${OPENFGA_STORE_ID}
@@ -133,7 +133,7 @@ services:
       CONTEXT_FABRIC_LISTEN_ADDR: ":8080"
       CONTEXT_FABRIC_LOG_LEVEL: info
       INDEX_BACKEND: postgres
-      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_PATH_STYLE: "true"
@@ -191,7 +191,7 @@ services:
       CONTEXT_FABRIC_ROLE: worker
       CONTEXT_FABRIC_PROFILE: starter
       INDEX_BACKEND: postgres
-      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER}:${POSTGRES_GATEWAY_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=${POSTGRES_SSLMODE:-disable}
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_PATH_STYLE: "true"

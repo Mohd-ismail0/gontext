@@ -85,7 +85,7 @@ services:
     command: ["migrate"]
     environment:
       OPENFGA_DATASTORE_ENGINE: postgres
-      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change-me-postgres-admin}@postgres:5432/openfga?sslmode=disable
+      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change-me-postgres-admin}@postgres:5432/openfga?sslmode=${POSTGRES_SSLMODE:-disable}
     depends_on:
       postgres:
         condition: service_healthy
@@ -97,7 +97,7 @@ services:
     command: ["run"]
     environment:
       OPENFGA_DATASTORE_ENGINE: postgres
-      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change-me-postgres-admin}@postgres:5432/openfga?sslmode=disable
+      OPENFGA_DATASTORE_URI: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change-me-postgres-admin}@postgres:5432/openfga?sslmode=${POSTGRES_SSLMODE:-disable}
       OPENFGA_HTTP_ADDR: 0.0.0.0:8080
       OPENFGA_GRPC_ADDR: 0.0.0.0:8081
       OPENFGA_PLAYGROUND_ENABLED: "false"
@@ -122,8 +122,8 @@ services:
       CONTEXT_FABRIC_ROLE: migrate
       CONTEXT_FABRIC_PROFILE: demo
       MIGRATIONS_DIR: /migrations
-      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB:-context_fabric}?sslmode=disable
-      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change-me-postgres-admin}@postgres:5432/${POSTGRES_DB:-context_fabric}?sslmode=disable
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB:-context_fabric}?sslmode=${POSTGRES_SSLMODE:-disable}
+      POSTGRES_ADMIN_DSN: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-change-me-postgres-admin}@postgres:5432/${POSTGRES_DB:-context_fabric}?sslmode=${POSTGRES_SSLMODE:-disable}
     depends_on:
       postgres:
         condition: service_healthy
@@ -141,7 +141,7 @@ services:
       CONTEXT_FABRIC_ROLE: all
       CONTEXT_FABRIC_PROFILE: demo
       CONTEXT_FABRIC_LISTEN_ADDR: ":8080"
-      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB:-context_fabric}?sslmode=disable
+      POSTGRES_DSN: postgres://${POSTGRES_GATEWAY_USER:-context_gateway}:${POSTGRES_GATEWAY_PASSWORD:-change-me-postgres-gateway}@postgres:5432/${POSTGRES_DB:-context_fabric}?sslmode=${POSTGRES_SSLMODE:-disable}
       S3_ENDPOINT: http://minio:9000
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-minioadmin}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-change-me-minio-secret}
