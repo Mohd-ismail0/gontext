@@ -28,9 +28,9 @@ services:
       - "5432"
 
   minio:
-    # MinIO no longer publishes these images on Docker Hub (pull now 404s);
-    # override MINIO_IMAGE to a mirror/registry that carries the same release tag.
-    image: ${MINIO_IMAGE:-minio/minio:RELEASE.2024-12-18T13-15-44Z}
+    # MinIO removed its Docker Hub images (pull now 404s). Default to a verified
+    # drop-in mirror carrying the same upstream release tag; override MINIO_IMAGE.
+    image: ${MINIO_IMAGE:-openebs/minio:RELEASE.2024-12-18T13-15-44Z}
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -40,7 +40,8 @@ services:
       - minio_data:/data
     networks:
       - private
-    # MinIO server image lacks curl/mc; readiness is enforced by minio-init (`mc ready`).
+    # The MinIO server image ships no shell client; bucket bootstrap (minio-init)
+    # waits on the S3 API before the app starts.
     healthcheck:
       disable: true
     expose:
@@ -48,13 +49,17 @@ services:
       - "9001"
 
   minio-init:
-    image: ${MINIO_MC_IMAGE:-minio/mc:RELEASE.2025-08-13T08-35-41Z}
+    # Bucket bootstrap via the S3 API using amazon/aws-cli (the upstream
+    # `minio/mc` image is no longer published). Override S3_INIT_IMAGE if needed.
+    image: ${S3_INIT_IMAGE:-amazon/aws-cli:latest}
     depends_on:
       minio:
         condition: service_started
     environment:
-      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
-      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: us-east-1
+      S3_ENDPOINT: http://minio:9000
       S3_BUCKET_RAW: ${S3_BUCKET_RAW}
       S3_BUCKET_DERIVED: ${S3_BUCKET_DERIVED}
       S3_BUCKET_QUARANTINE: ${S3_BUCKET_QUARANTINE}
@@ -63,18 +68,16 @@ services:
       - -c
       - |
         set -eu
-        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-          if mc alias set local http://minio:9000 "$${S3_ACCESS_KEY_ID}" "$${S3_SECRET_ACCESS_KEY}" \
-            && mc ready local; then
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+          if aws --endpoint-url "$${S3_ENDPOINT}" s3api list-buckets >/dev/null 2>&1; then
             break
           fi
           sleep 2
         done
-        mc ready local
         for b in "$${S3_BUCKET_RAW}" "$${S3_BUCKET_DERIVED}" "$${S3_BUCKET_QUARANTINE}"; do
-          mc mb --with-lock "local/$${b}" || mc mb --ignore-existing "local/$${b}"
-          mc version enable "local/$${b}" || true
-          mc retention set --default GOVERNANCE 30d "local/$${b}" || true
+          aws --endpoint-url "$${S3_ENDPOINT}" s3api create-bucket --bucket "$${b}" --object-lock-enabled-for-bucket >/dev/null 2>&1 \
+            || aws --endpoint-url "$${S3_ENDPOINT}" s3api create-bucket --bucket "$${b}" >/dev/null 2>&1 || true
+          aws --endpoint-url "$${S3_ENDPOINT}" s3api put-bucket-versioning --bucket "$${b}" --versioning-configuration Status=Enabled >/dev/null 2>&1 || true
         done
     networks:
       - private
@@ -228,7 +231,10 @@ services:
       context: ../..
       dockerfile: Dockerfile
     command: ["bootstrap"]
-    user: "0:0"
+    # Run as the image's non-root uid that owns the chowned OpenFGA volume.
+    # (Root would lack CAP_DAC_OVERRIDE under the overlay's cap_drop: ALL and be
+    # treated as "other" on the 0775 volume, so writes would be denied.)
+    user: "65532:65532"
     env_file:
       - .env
     environment:

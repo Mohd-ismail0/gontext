@@ -39,9 +39,10 @@ delivery. **Follow-up:** pin the resolved address with a custom `DialContext`.
 
 ## Deployment / supply chain
 
-- **MinIO images** were removed from Docker Hub (pull 404s). The images are now
-  overridable via `MINIO_IMAGE` / `MINIO_MC_IMAGE`; a verified registry + tag
-  still needs to be pinned.
+- **MinIO images** were removed from Docker Hub (pull 404s). The server now
+  defaults to a verified drop-in mirror (`openebs/minio`, same upstream release
+  tag) and the bucket bootstrap uses `amazon/aws-cli` instead of `minio/mc`. Both
+  are overridable via `MINIO_IMAGE` / `S3_INIT_IMAGE`.
 - Helm `dependencies.*.connectionMode: bundled` is declared but no bundled
   resources are templated, and the `migrate` job is a `pre-install` hook (would
   run before bundled deps exist). External dependencies are required today.
