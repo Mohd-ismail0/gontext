@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/component: serve
     spec:
       serviceAccountName: {{ include "context-fabric.serviceAccountName" . }}
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -103,6 +104,7 @@ spec:
         app.kubernetes.io/component: worker
     spec:
       serviceAccountName: {{ include "context-fabric.serviceAccountName" . }}
+      automountServiceAccountToken: false
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
@@ -123,6 +125,11 @@ spec:
             - name: tmp
               mountPath: /tmp
           livenessProbe:
+            exec:
+              command: ["/usr/local/bin/context-fabric", "doctor"]
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
             exec:
               command: ["/usr/local/bin/context-fabric", "doctor"]
             periodSeconds: 30

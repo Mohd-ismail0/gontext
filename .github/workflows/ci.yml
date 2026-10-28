@@ -8,9 +8,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -29,6 +34,7 @@ jobs:
   unit:
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -46,31 +52,34 @@ jobs:
   contracts:
     runs-on: ubuntu-latest
     needs: lint
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: Install PyYAML
         run: pip install pyyaml
       - name: Validate contracts and profiles
         run: bash scripts/validate-contracts.sh
-      - name: Validate migration 009 present
-        run: test -s migrations/009_legal_holds.sql || test -s migrations/008_outbox_claim_and_org_revoke.sql
+      - name: Validate migration head present
+        run: test -s migrations/009_legal_holds.sql
 
   security:
     runs-on: ubuntu-latest
     needs: unit
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: "1.26.x"
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
       - name: govulncheck
         run: govulncheck ./...
 
   build:
     runs-on: ubuntu-latest
     needs: [unit, contracts]
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
       - name: Docker build
