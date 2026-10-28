@@ -118,6 +118,9 @@ func (l *Limiter) Allow(key Key) error {
 	b, ok := l.buckets[id]
 	now := l.now()
 	if !ok {
+		if len(l.buckets) >= maxBuckets {
+			l.evictIdleLocked(now)
+		}
 		b = &bucket{
 			tokens:     burst,
 			capacity:   burst,
@@ -155,5 +158,18 @@ func rateForLimits(l Limits, op Operation) float64 {
 		return l.ExportPerMinute
 	default:
 		return 0
+	}
+}
+
+// maxBuckets bounds the in-memory bucket map (per distinct org/source/principal).
+const maxBuckets = 100000
+
+// evictIdleLocked drops buckets that have not been touched recently so the map
+// cannot grow without bound.
+func (l *Limiter) evictIdleLocked(now time.Time) {
+	for k, b := range l.buckets {
+		if now.Sub(b.last) > 10*time.Minute {
+			delete(l.buckets, k)
+		}
 	}
 }

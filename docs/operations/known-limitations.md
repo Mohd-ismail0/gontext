@@ -61,3 +61,9 @@ delivery. **Follow-up:** pin the resolved address with a custom `DialContext`.
 - Module path is `github.com/xsama/context-fabric` while the repo/image are
   `mohd-ismail0/gontext`. This is **intentional for the current milestone** per
   [ADR 0016](../adr/0016-compose-first-production-release.md).
+- Webhook delivery enumerates orgs from the in-memory subscription map
+  (`internal/changes/changes.go`), so after a process restart it will not resume
+  for orgs whose subscriptions live only in the durable store. The durable store
+  has no list-all-orgs API; a fix needs one.
+- The in-memory adapter's `WithOrgTx` does not roll back on error (unlike
+  Postgres), so tests run against memory cannot catch partial-write bugs.
