@@ -1035,10 +1035,23 @@ VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 	})
 }
 
-// ListChanges returns change events after cursor (lexicographic on cursor column).
+// ListChanges returns change events in (occurred_at, id) order after the given
+// composite cursor ("<RFC3339Nano>|<id>"). The single `cursor` column is NOT used
+// for ordering because producers wrote heterogeneous values (revision ids,
+// timestamps, event ids) into it, which made paging skip/repeat events.
 func (s *Store) ListChanges(ctx context.Context, orgID, cursor string, limit int) ([]ports.ChangeEvent, string, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	var afterTime time.Time
+	afterID := ""
+	if cursor != "" {
+		if i := strings.IndexByte(cursor, '|'); i >= 0 {
+			if t, err := time.Parse(time.RFC3339Nano, cursor[:i]); err == nil {
+				afterTime = t
+				afterID = cursor[i+1:]
+			}
+		}
 	}
 	var out []ports.ChangeEvent
 	next := cursor
@@ -1046,9 +1059,9 @@ func (s *Store) ListChanges(ctx context.Context, orgID, cursor string, limit int
 		rows, err := tx.Query(ctx, `
 SELECT id, organization_id, resource_id, COALESCE(revision_id,''), action, cursor, occurred_at
 FROM change_events
-WHERE organization_id=$1 AND ($2 = '' OR cursor > $2)
-ORDER BY cursor ASC
-LIMIT $3`, orgID, cursor, limit)
+WHERE organization_id=$1 AND ($2 = '' OR (occurred_at, id) > ($3, $4))
+ORDER BY occurred_at ASC, id ASC
+LIMIT $5`, orgID, cursor, afterTime, afterID, limit)
 		if err != nil {
 			return err
 		}
@@ -1059,11 +1072,14 @@ LIMIT $3`, orgID, cursor, limit)
 				return err
 			}
 			out = append(out, ev)
-			next = ev.Cursor
+			next = ev.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + ev.EventID
 		}
 		return rows.Err()
 	})
-	return out, next, err
+	if err != nil {
+		return nil, "", err
+	}
+	return out, next, nil
 }
 
 // GetQuotas loads org quotas (defaults when no row).

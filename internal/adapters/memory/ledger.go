@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -967,22 +968,44 @@ func (s *Store) AppendChange(_ context.Context, ev ports.ChangeEvent) error {
 	return nil
 }
 
-// ListChanges returns change events after cursor.
+// ListChanges returns change events in (occurred_at, event_id) order after the
+// composite cursor ("<RFC3339Nano>|<id>"), matching the Postgres adapter.
 func (s *Store) ListChanges(_ context.Context, orgID, cursor string, limit int) ([]ports.ChangeEvent, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 50
 	}
-	all := s.changes[orgID]
+	var afterTime time.Time
+	afterID := ""
+	hasCursor := false
+	if cursor != "" {
+		if i := strings.IndexByte(cursor, '|'); i >= 0 {
+			if t, err := time.Parse(time.RFC3339Nano, cursor[:i]); err == nil {
+				afterTime = t
+				afterID = cursor[i+1:]
+				hasCursor = true
+			}
+		}
+	}
+	all := append([]ports.ChangeEvent(nil), s.changes[orgID]...)
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].OccurredAt.Equal(all[j].OccurredAt) {
+			return all[i].OccurredAt.Before(all[j].OccurredAt)
+		}
+		return all[i].EventID < all[j].EventID
+	})
 	out := make([]ports.ChangeEvent, 0, limit)
 	next := cursor
 	for _, ev := range all {
-		if cursor != "" && ev.Cursor <= cursor {
-			continue
+		if hasCursor {
+			if ev.OccurredAt.Before(afterTime) ||
+				(ev.OccurredAt.Equal(afterTime) && ev.EventID <= afterID) {
+				continue
+			}
 		}
 		out = append(out, ev)
-		next = ev.Cursor
+		next = ev.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + ev.EventID
 		if len(out) >= limit {
 			break
 		}
