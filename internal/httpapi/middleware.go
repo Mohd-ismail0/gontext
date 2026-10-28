@@ -96,7 +96,7 @@ func Middleware(next http.Handler, cfg MiddlewareConfig) http.Handler {
 			limit = cfg.IntakeBatchMaxBytes
 		}
 		if r.ContentLength > limit {
-			http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds limit")
 			return
 		}
 		if r.Body != nil && r.Body != http.NoBody {
@@ -112,7 +112,7 @@ func Middleware(next http.Handler, cfg MiddlewareConfig) http.Handler {
 					"method", r.Method,
 					"stack", string(debug.Stack()),
 				)
-				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal error")
 			}
 		}()
 
@@ -141,4 +141,16 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
 	w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+}
+
+// writeJSONError emits the same JSON error envelope as writeErr for failures
+// raised at the middleware layer (body limit, panic) so clients always get JSON.
+func writeJSONError(w http.ResponseWriter, status int, reason, msg string) {
+	writeJSON(w, status, map[string]any{
+		"error": map[string]any{
+			"reason_code": reason,
+			"message":     msg,
+			"retryable":   false,
+		},
+	})
 }

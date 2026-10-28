@@ -181,11 +181,16 @@ func (p *Pipeline) Search(ctx context.Context, req Request) (ports.ContextPacket
 		return ports.ContextPacket{}, err
 	}
 	observability.Inc(observability.AuthzBatchChecks)
+	// Fail closed on a provider that returns fewer/reordered decisions: positional
+	// pairing is required to authorize the right candidate.
+	if len(decisions) != len(checks) {
+		return ports.ContextPacket{}, platform.ErrInternal("authz batch decision count mismatch")
+	}
 
 	allowedHits := make([]ports.SearchHit, 0, len(candidates))
 	authzRev := ""
 	for i, hit := range candidates {
-		if i < len(decisions) && decisions[i].Allowed {
+		if decisions[i].Allowed {
 			allowedHits = append(allowedHits, hit)
 			authzRev = decisions[i].ModelRevision
 		}
@@ -665,6 +670,11 @@ func (p *Pipeline) visibleSubgraph(ctx context.Context, principal ports.Principa
 		sort.Strings(neighbors)
 		if len(neighbors) == 0 {
 			break
+		}
+		// Bound per-hop AuthZ fan-out deterministically (frontier is sorted).
+		if len(neighbors) > edgeCap {
+			neighbors = neighbors[:edgeCap]
+			truncated = true
 		}
 		ok, _, err := p.batchAllow(ctx, principal, req, neighbors)
 		if err != nil {
