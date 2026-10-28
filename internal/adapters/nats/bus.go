@@ -19,11 +19,12 @@ const defaultStream = "CONTEXT"
 
 // Bus is a NATS JetStream EventBus.
 type Bus struct {
-	nc     *nats.Conn
-	js     nats.JetStreamContext
-	stream string
-	mu     sync.Mutex
-	subs   []*nats.Subscription
+	nc      *nats.Conn
+	js      nats.JetStreamContext
+	stream  string
+	mu      sync.Mutex
+	subs    []*nats.Subscription
+	indexPC *PullConsumer
 }
 
 // Connect opens a JetStream connection. Returns NoopBus-compatible error path via ConnectOrNoop.
@@ -99,16 +100,22 @@ func ConnectOrNoop(url string) ports.EventBus {
 }
 
 func (b *Bus) ensureStream() error {
-	_, err := b.js.StreamInfo(b.stream)
-	if err == nil {
+	cfg := &nats.StreamConfig{
+		Name:       b.stream,
+		Subjects:   []string{"context.>"},
+		Storage:    nats.FileStorage,
+		Retention:  nats.LimitsPolicy,
+		MaxAge:     7 * 24 * time.Hour,
+		MaxMsgs:    1_000_000,
+		MaxBytes:   8 << 30, // 8 GiB safety cap
+		Duplicates: 2 * time.Minute,
+	}
+	if _, err := b.js.StreamInfo(b.stream); err == nil {
+		// Reconcile limits on an existing stream so config drift is corrected.
+		_, _ = b.js.UpdateStream(cfg)
 		return nil
 	}
-	_, err = b.js.AddStream(&nats.StreamConfig{
-		Name:      b.stream,
-		Subjects:  []string{"context.>"},
-		Storage:   nats.FileStorage,
-		Retention: nats.LimitsPolicy,
-	})
+	_, err := b.js.AddStream(cfg)
 	return err
 }
 
@@ -165,10 +172,14 @@ type PullConsumer struct {
 
 // PullSubscribe creates or binds a durable pull consumer.
 func (b *Bus) PullSubscribe(consumer, subject string) (*PullConsumer, error) {
-	sub, err := b.js.PullSubscribe(subject, consumer, nats.BindStream(b.stream))
+	sub, err := b.js.PullSubscribe(subject, consumer,
+		nats.BindStream(b.stream),
+		nats.AckWait(60*time.Second),
+		nats.MaxDeliver(5),
+	)
 	if err != nil {
-		// create durable via SubscribeSync options
-		sub, err = b.js.PullSubscribe(subject, consumer)
+		// Consumer already exists with different config: bind without overrides.
+		sub, err = b.js.PullSubscribe(subject, consumer, nats.BindStream(b.stream))
 		if err != nil {
 			return nil, err
 		}
@@ -190,24 +201,35 @@ func (c *PullConsumer) Fetch(ctx context.Context, max int, wait time.Duration) (
 	}
 	out := make([]ports.EventMessage, 0, len(msgs))
 	for _, m := range msgs {
+		msg := m
 		out = append(out, ports.EventMessage{
-			Subject:   m.Subject,
-			Data:      append([]byte(nil), m.Data...),
-			Headers:   headerMap(m.Header),
-			MsgID:     m.Header.Get("Nats-Msg-Id"),
+			Subject:   msg.Subject,
+			Data:      append([]byte(nil), msg.Data...),
+			Headers:   headerMap(msg.Header),
+			MsgID:     msg.Header.Get("Nats-Msg-Id"),
 			Timestamp: time.Now().UTC(),
+			Ack:       func() error { return msg.Ack() },
+			Nak:       func() error { return msg.Nak() },
 		})
-		_ = m.Ack()
 	}
 	return out, nil
 }
 
-// FetchIndex pulls messages for the index projector consumer.
+// FetchIndex pulls messages for the index projector consumer. The durable
+// consumer is bound once and reused across polls (previously re-subscribed every
+// call, leaking consumers and churning the server).
 func (b *Bus) FetchIndex(ctx context.Context, max int, wait time.Duration) ([]ports.EventMessage, error) {
-	pc, err := b.PullSubscribe(indexConsumerName, "context.>")
-	if err != nil {
-		return nil, err
+	b.mu.Lock()
+	if b.indexPC == nil {
+		pc, err := b.PullSubscribe(indexConsumerName, "context.>")
+		if err != nil {
+			b.mu.Unlock()
+			return nil, err
+		}
+		b.indexPC = pc
 	}
+	pc := b.indexPC
+	b.mu.Unlock()
 	return pc.Fetch(ctx, max, wait)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,16 +145,24 @@ FROM resources WHERE organization_id=$1 AND id=$2`, orgID, resourceID).
 	return r, err
 }
 
-func (s *Store) ListRecords(ctx context.Context, orgID string, limit int, _ string) ([]ports.Record, string, error) {
+func (s *Store) ListRecords(ctx context.Context, orgID string, limit int, cursor string) ([]ports.Record, string, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	offset := 0
+	if cursor != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			offset = n
+		}
 	}
 	var out []ports.Record
 	err := s.pool.WithTenant(ctx, orgID, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 SELECT id, organization_id, resource_type, COALESCE(title,''), COALESCE(classification,'internal'),
        COALESCE(current_revision_id,''), created_at, updated_at
-FROM resources WHERE organization_id=$1 LIMIT $2`, orgID, limit)
+FROM resources WHERE organization_id=$1
+ORDER BY created_at ASC, id ASC
+LIMIT $2 OFFSET $3`, orgID, limit, offset)
 		if err != nil {
 			return err
 		}
@@ -167,7 +176,11 @@ FROM resources WHERE organization_id=$1 LIMIT $2`, orgID, limit)
 		}
 		return rows.Err()
 	})
-	return out, "", err
+	next := ""
+	if err == nil && len(out) == limit {
+		next = strconv.Itoa(offset + len(out))
+	}
+	return out, next, err
 }
 
 func (s *Store) AppendRevision(ctx context.Context, tx ports.Tx, rev ports.Revision) error {

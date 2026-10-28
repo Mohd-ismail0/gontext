@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -174,20 +175,41 @@ func (s *Store) GetRecord(_ context.Context, orgID, resourceID string) (ports.Re
 	return r, nil
 }
 
-func (s *Store) ListRecords(_ context.Context, orgID string, limit int, _ string) ([]ports.Record, string, error) {
+func (s *Store) ListRecords(_ context.Context, orgID string, limit int, cursor string) ([]ports.Record, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 50
 	}
-	out := make([]ports.Record, 0, limit)
+	all := make([]ports.Record, 0, len(s.records[orgID]))
 	for _, r := range s.records[orgID] {
-		out = append(out, r)
-		if len(out) >= limit {
-			break
+		all = append(all, r)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
+		}
+		return all[i].ResourceID < all[j].ResourceID
+	})
+	offset := 0
+	if cursor != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			offset = n
 		}
 	}
-	return out, "", nil
+	if offset >= len(all) {
+		return []ports.Record{}, "", nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	out := append([]ports.Record(nil), all[offset:end]...)
+	next := ""
+	if end < len(all) {
+		next = strconv.Itoa(end)
+	}
+	return out, next, nil
 }
 
 func (s *Store) AppendRevision(_ context.Context, _ ports.Tx, rev ports.Revision) error {

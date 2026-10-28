@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 
 	"github.com/xsama/context-fabric/internal/platform"
 	"github.com/xsama/context-fabric/internal/ports"
@@ -153,7 +155,16 @@ func (s *Store) Get(ctx context.Context, key, versionID string) (io.ReadCloser, 
 	}
 	out, err := s.client.GetObject(ctx, in)
 	if err != nil {
-		return nil, ports.EvidenceObject{}, platform.ErrNotFound("evidence not found")
+		// Distinguish a genuine miss (404) from outages/throttling/authz so callers
+		// can retry real failures instead of treating evidence as permanently gone.
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			switch apiErr.ErrorCode() {
+			case "NoSuchKey", "NotFound", "NoSuchVersion":
+				return nil, ports.EvidenceObject{}, platform.ErrNotFound("evidence not found")
+			}
+		}
+		return nil, ports.EvidenceObject{}, platform.ErrUnavailable("evidence store unavailable")
 	}
 	meta := ports.EvidenceObject{
 		Key: key, VersionID: versionID, ContentType: aws.ToString(out.ContentType),

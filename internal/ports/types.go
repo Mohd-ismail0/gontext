@@ -395,6 +395,11 @@ type EventMessage struct {
 	Headers   map[string]string `json:"headers,omitempty"`
 	MsgID     string            `json:"msg_id,omitempty"`
 	Timestamp time.Time         `json:"timestamp"`
+	// Ack/Nak settle a durable delivery (JetStream). Nil for in-process/noop buses.
+	// Consumers MUST Ack only after successful processing, otherwise the message is
+	// redelivered or dead-lettered.
+	Ack func() error `json:"-"`
+	Nak func() error `json:"-"`
 }
 
 // Subscription is a cancellable event bus subscription.
