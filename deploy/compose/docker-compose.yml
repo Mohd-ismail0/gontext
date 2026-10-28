@@ -231,7 +231,10 @@ services:
       context: ../..
       dockerfile: Dockerfile
     command: ["bootstrap"]
-    user: "0:0"
+    # Run as the image's non-root uid that owns the chowned OpenFGA volume.
+    # (Root would lack CAP_DAC_OVERRIDE under the overlay's cap_drop: ALL and be
+    # treated as "other" on the 0775 volume, so writes would be denied.)
+    user: "65532:65532"
     env_file:
       - .env
     environment:

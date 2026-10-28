@@ -90,8 +90,10 @@ services:
 
   bootstrap:
     <<: *starter_app
-    # One-shot: Docker creates named volumes root-owned; seed OpenFGA pins then chown for serve/worker (nonroot).
-    user: "0:0"
+    # One-shot: writes OpenFGA pins into the volume chowned by openfga-vol-init.
+    # Run as that owner (65532) — root would lack CAP_DAC_OVERRIDE under the
+    # anchor's cap_drop: ALL and be denied write on the 0775 volume.
+    user: "65532:65532"
     read_only: false
     env_file: !reset []
     environment:
