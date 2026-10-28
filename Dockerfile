@@ -23,7 +23,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
       -ldflags="-s -w -X main.buildVersion=${VERSION}" \
     -o /out/context-fabric ./cmd/context-fabric
 
-FROM alpine:3.21 AS runtime
+FROM alpine:3.24 AS runtime
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
