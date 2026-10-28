@@ -55,8 +55,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - name: Install PyYAML
-        run: pip install pyyaml
+      - name: Install validation deps
+        run: pip install pyyaml jsonschema
       - name: Validate contracts and profiles
         run: bash scripts/validate-contracts.sh
       - name: Shellcheck scripts

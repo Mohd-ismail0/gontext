@@ -4,10 +4,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-echo "==> JSON Schema files"
-for f in contracts/jsonschema/*.json; do
-  python3 -c "import json; json.load(open('$f'))"
-done
+echo "==> JSON Schema files (parse + draft 2020-12 metaschema)"
+python3 -c "
+import glob, json
+from jsonschema import Draft202012Validator
+files = sorted(glob.glob('contracts/jsonschema/*.json')) + sorted(glob.glob('deploy/schema/*.schema.json'))
+for f in files:
+    Draft202012Validator.check_schema(json.load(open(f)))
+print('validated %d schema documents' % len(files))
+"
 
 echo "==> OpenAPI"
 test -s contracts/openapi/openapi.yaml
