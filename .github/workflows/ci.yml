@@ -17,8 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
       - name: Vet
@@ -36,8 +36,8 @@ jobs:
     needs: lint
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
       - name: Test with race detector
@@ -54,11 +54,13 @@ jobs:
     needs: lint
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Install PyYAML
         run: pip install pyyaml
       - name: Validate contracts and profiles
         run: bash scripts/validate-contracts.sh
+      - name: Shellcheck scripts
+        run: shellcheck --severity=error scripts/*.sh
       - name: Validate migration head present
         run: test -s migrations/009_legal_holds.sql
 
@@ -67,8 +69,8 @@ jobs:
     needs: unit
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
       - name: Install govulncheck
@@ -81,6 +83,6 @@ jobs:
     needs: [unit, contracts]
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Docker build
         run: docker build -t ghcr.io/mohd-ismail0/gontext:ci .
