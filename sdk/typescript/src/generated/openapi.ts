@@ -143,9 +143,12 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Policy-first hybrid search
-         * @description OAuth scope ceiling `context:search`. Tags/filters only AND-narrow;
-         *     they never grant access. Returns a cited ContextPacket.
+         * Policy-first ranked lexical search
+         * @description OAuth scope ceiling `context:search`. Candidates come from an org-scoped
+         *     sparse/FTS projection (IDs, titles, labels, short summaries). Tags/filters
+         *     only AND-narrow; they never grant access. AuthZ BatchCheck runs before
+         *     hydration. Dense/hybrid fusion is out of v1 until measured (ADR 0015).
+         *     Returns a cited ContextPacket.
          */
         post: operations["searchContext"];
         delete?: never;
@@ -701,7 +704,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Stable error envelope returned on all 4xx/5xx responses. */
         Error: {
+            error: components["schemas"]["ErrorDetail"];
+        };
+        ErrorDetail: {
             /**
              * @description Stable machine-readable reason code.
              * @example AUTHZ_DENY_CROSS_ORG
@@ -715,12 +722,9 @@ export interface components {
             trace_id?: string;
             retryable: boolean;
             /** @description Seconds to wait before retry when retryable. */
-            retry_after?: number;
+            retry_after_seconds?: number;
             /** Format: uri */
-            documentation_url?: string;
-            details?: {
-                [key: string]: unknown;
-            };
+            doc_url?: string;
         };
         HealthStatus: {
             /** @enum {string} */
@@ -835,7 +839,10 @@ export interface components {
             /** @description Seed node for bounded subgraph traversal. */
             resource_id: string;
             purpose: components["schemas"]["Purpose"];
-            /** @default 2 */
+            /**
+             * @description BFS hop budget. Server hard-caps at 4 (ADR 0015).
+             * @default 1
+             */
             depth: number;
             /**
              * @description Hard cap on returned nodes; seed is always retained when present.
@@ -845,7 +852,10 @@ export interface components {
             /** @description Optional predicate allowlist (AND-narrow). */
             predicates?: string[];
             consistency?: components["schemas"]["ConsistencyMode"];
-            /** @description Resume cursor from a prior truncated graph response. */
+            /**
+             * @description Truncation signal companion only in v1. Resume pagination is not
+             *     guaranteed; clients should re-query with adjusted depth/max_nodes.
+             */
             cursor?: string;
         };
         ContextPacket: {
@@ -872,7 +882,10 @@ export interface components {
             confidence?: number;
             /** @description True when node/edge budgets or traversal caps were hit. */
             truncated?: boolean;
-            /** @description Opaque resume token when truncated is true. */
+            /**
+             * @description Opaque truncation signal when truncated is true. Resume pagination is
+             *     not guaranteed in v1 (ADR 0015); re-query with adjusted caps.
+             */
             next_cursor?: string;
             /** Format: date-time */
             responded_at?: string;
