@@ -287,6 +287,7 @@ func (s *Service) RecordDelivery(orgID, subscriptionID, eventID string, attempt,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deliv[orgID] = append(s.deliv[orgID], d)
+	s.trimDeliveriesLocked(orgID)
 	return d
 }
 
@@ -307,6 +308,7 @@ func (s *Service) RecordDuplicate(orgID, subscriptionID, eventID string, payload
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.deliv[orgID] = append(s.deliv[orgID], d)
+	s.trimDeliveriesLocked(orgID)
 	return d
 }
 
@@ -357,6 +359,31 @@ func minInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// maxDeliveryLog bounds the in-memory delivery log per org (durable store, when
+// configured, remains the source of truth).
+const maxDeliveryLog = 1000
+
+// safeDeliveryClient returns a client that never follows redirects, so a
+// registered webhook cannot 3xx-redirect deliveries to internal addresses (SSRF).
+func safeDeliveryClient(client *http.Client) *http.Client {
+	if client == nil {
+		client = &http.Client{}
+	}
+	if client.CheckRedirect != nil {
+		return client
+	}
+	cp := *client
+	cp.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return &cp
+}
+
+func (s *Service) trimDeliveriesLocked(orgID string) {
+	all := s.deliv[orgID]
+	if len(all) > maxDeliveryLog {
+		s.deliv[orgID] = append([]DeliveryAttempt(nil), all[len(all)-maxDeliveryLog:]...)
+	}
 }
 
 // ListDeliveries returns delivery attempts for a subscription.
@@ -435,11 +462,11 @@ func (s *Service) DeliverSigned(orgID, subscriptionID string, ev ports.ChangeEve
 	return body, signature, delivery, nil
 }
 
-// DeliverPending HTTP POSTs signed bodies for undelivered change events to matching subscriptions.
+// DeliverPending HTTP POSTs signed bodies for undelivered change events to matching
+// subscriptions. It pages through the whole change feed (not just the first 100
+// events) and counts only successful deliveries, so failed pushes are retried.
 func (s *Service) DeliverPending(ctx context.Context, client *http.Client, timeout time.Duration, limit int) int {
-	if client == nil {
-		client = &http.Client{}
-	}
+	client = safeDeliveryClient(client)
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
@@ -455,37 +482,42 @@ func (s *Service) DeliverPending(ctx context.Context, client *http.Client, timeo
 
 	delivered := 0
 	for _, orgID := range orgIDs {
-		if delivered >= limit {
+		if delivered >= limit || ctx.Err() != nil {
 			break
 		}
 		subs := s.enabledSubs(ctx, orgID)
 		if len(subs) == 0 || s.Feed == nil {
 			continue
 		}
-		events, _, err := s.Feed.ListChanges(ctx, orgID, "", 100)
-		if err != nil {
-			continue
-		}
-		for _, ev := range events {
-			if delivered >= limit {
+		cursor := ""
+		for delivered < limit && ctx.Err() == nil {
+			events, next, err := s.Feed.ListChanges(ctx, orgID, cursor, 100)
+			if err != nil || len(events) == 0 {
 				break
 			}
-			for _, sub := range subs {
+			for _, ev := range events {
 				if delivered >= limit {
 					break
 				}
-				if s.hasSuccessfulDelivery(orgID, sub.ID, ev.EventID) {
-					continue
-				}
-				if !eventMatches(sub.Events, ev.Action) {
-					continue
-				}
-				if err := s.pushOne(ctx, client, timeout, sub, ev); err == nil {
-					delivered++
-				} else {
-					delivered++ // still count attempt
+				for _, sub := range subs {
+					if delivered >= limit {
+						break
+					}
+					if s.hasSuccessfulDelivery(orgID, sub.ID, ev.EventID) {
+						continue
+					}
+					if !eventMatches(sub.Events, ev.Action) {
+						continue
+					}
+					if err := s.pushOne(ctx, client, timeout, sub, ev); err == nil {
+						delivered++
+					}
 				}
 			}
+			if next == "" || next == cursor {
+				break
+			}
+			cursor = next
 		}
 	}
 	return delivered
@@ -516,6 +548,7 @@ func (s *Service) DeliverTestPing(ctx context.Context, client *http.Client, time
 }
 
 func (s *Service) pushOne(ctx context.Context, client *http.Client, timeout time.Duration, sub Subscription, ev ports.ChangeEvent) error {
+	client = safeDeliveryClient(client)
 	if s.hasSuccessfulDelivery(sub.OrgID, sub.ID, ev.EventID) {
 		pub := ToPublic(ev)
 		body, _ := json.Marshal(pub)

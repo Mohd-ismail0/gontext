@@ -427,6 +427,15 @@ func (w *Worker) consumeOnce(ctx context.Context) error {
 		for _, msg := range msgs {
 			if err := w.projectPayload(ctx, msg.Data); err != nil {
 				log.Printf("worker consume jetstream: %v", err)
+				if msg.Nak != nil {
+					_ = msg.Nak()
+				}
+				continue
+			}
+			// Ack only after the projection is durably recorded; otherwise the
+			// message is redelivered (at-least-once) instead of silently lost.
+			if msg.Ack != nil {
+				_ = msg.Ack()
 			}
 		}
 	}

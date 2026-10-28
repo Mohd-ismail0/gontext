@@ -612,7 +612,9 @@ func validateConfigOverlay(path string) error {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("parse CONTEXT_FABRIC_CONFIG: %w", err)
 	}
-	// Stub validation: ensure deployment config envelope matches deploy/schema/config.schema.json.
+	// Envelope check only (apiVersion/kind/profile). Full validation of a
+	// deployment config against deploy/schema/config.schema.json runs in CI via
+	// scripts/validate-profiles.sh; profiles go through the same schema.
 	if got, _ := doc["apiVersion"].(string); got != "context-fabric.io/v1" {
 		return fmt.Errorf("CONTEXT_FABRIC_CONFIG apiVersion must be context-fabric.io/v1")
 	}

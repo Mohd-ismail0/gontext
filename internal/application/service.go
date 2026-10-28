@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xsama/context-fabric/internal/audit"
@@ -41,6 +42,9 @@ type ApplicationService struct {
 	Changes ChangeLister
 	Quotas  QuotaStore
 	Extras  ExtraStore
+
+	quotaMu    sync.Mutex
+	quotaCache map[string]quotaLimitsEntry
 
 	// Lifecycle / MCP extensions.
 	Deletion    *deletion.Service
@@ -111,11 +115,65 @@ type SearchFilters struct {
 	IncludeTags []string `json:"include_tags,omitempty"`
 }
 
+type quotaLimitsEntry struct {
+	limits quota.Limits
+	at     time.Time
+}
+
+// enforceQuota applies any persisted org quota (cached for 30s) and consumes a
+// token. Without a QuotaStore it falls back to the limiter defaults.
+func (s *ApplicationService) enforceQuota(ctx context.Context, orgID string, op quota.Operation) error {
+	if s.Quota == nil {
+		return nil
+	}
+	s.refreshOrgQuota(ctx, orgID)
+	return s.Quota.Allow(quota.Key{OrgID: orgID, Op: op})
+}
+
+func (s *ApplicationService) refreshOrgQuota(ctx context.Context, orgID string) {
+	if s.Quotas == nil || strings.TrimSpace(orgID) == "" {
+		return
+	}
+	s.quotaMu.Lock()
+	if e, ok := s.quotaCache[orgID]; ok && time.Since(e.at) < 30*time.Second {
+		s.quotaMu.Unlock()
+		return
+	}
+	prev := s.quotaCache[orgID]
+	s.quotaMu.Unlock()
+
+	q, err := s.Quotas.GetQuotas(ctx, orgID)
+	if err != nil {
+		return
+	}
+	limits := quota.Limits{
+		SearchPerMinute: float64(orDefault(q.SearchPerMinute, 60)),
+		IntakePerMinute: float64(orDefault(q.IntakePerMinute, 120)),
+		ExportPerMinute: float64(orDefault(q.ExportPerMinute, 10)),
+		Burst:           20,
+	}
+	s.quotaMu.Lock()
+	if s.quotaCache == nil {
+		s.quotaCache = map[string]quotaLimitsEntry{}
+	}
+	s.quotaCache[orgID] = quotaLimitsEntry{limits: limits, at: time.Now()}
+	s.quotaMu.Unlock()
+	// Only reset the org's buckets when the limits actually change.
+	if prev.limits != limits {
+		s.Quota.SetOrgLimits(orgID, limits)
+	}
+}
+
+func orDefault(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+	return v
+}
+
 func (s *ApplicationService) Search(ctx context.Context, creds ports.Credentials, orgID string, scopes []string, body SearchRequest) (ports.ContextPacket, error) {
-	if s.Quota != nil {
-		if err := s.Quota.Allow(quota.Key{OrgID: orgID, Op: quota.OpSearch}); err != nil {
-			return ports.ContextPacket{}, err
-		}
+	if err := s.enforceQuota(ctx, orgID, quota.OpSearch); err != nil {
+		return ports.ContextPacket{}, err
 	}
 	filters := map[string]string{}
 	if body.Filters != nil && len(body.Filters.IncludeTags) > 0 {
@@ -193,10 +251,8 @@ type GraphRequest struct {
 
 // Graph returns the caller's visible knowledge subgraph around a seed node.
 func (s *ApplicationService) Graph(ctx context.Context, creds ports.Credentials, orgID string, scopes []string, body GraphRequest) (ports.ContextPacket, error) {
-	if s.Quota != nil {
-		if err := s.Quota.Allow(quota.Key{OrgID: orgID, Op: quota.OpSearch}); err != nil {
-			return ports.ContextPacket{}, err
-		}
+	if err := s.enforceQuota(ctx, orgID, quota.OpSearch); err != nil {
+		return ports.ContextPacket{}, err
 	}
 	cons := ports.ConsistencyMinLatency
 	if body.Consistency == string(ports.ConsistencyFullyConsistent) {
@@ -489,10 +545,8 @@ func (s *ApplicationService) Intake(ctx context.Context, creds ports.Credentials
 	if err := s.requireIngest(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
-	if s.Quota != nil {
-		if err := s.Quota.Allow(quota.Key{OrgID: orgID, Op: quota.OpIntake}); err != nil {
-			return nil, err
-		}
+	if err := s.enforceQuota(ctx, orgID, quota.OpIntake); err != nil {
+		return nil, err
 	}
 	event := req.Event
 	if event.EventID == "" {
@@ -780,10 +834,8 @@ func (s *ApplicationService) StartExport(ctx context.Context, creds ports.Creden
 	if err := s.requireManage(ctx, principal, orgID, nil); err != nil {
 		return nil, err
 	}
-	if s.Quota != nil {
-		if err := s.Quota.Allow(quota.Key{OrgID: orgID, Op: quota.OpExport}); err != nil {
-			return nil, err
-		}
+	if err := s.enforceQuota(ctx, orgID, quota.OpExport); err != nil {
+		return nil, err
 	}
 	if s.Export == nil {
 		id := platform.NewEventID()

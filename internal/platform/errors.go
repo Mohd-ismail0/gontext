@@ -89,6 +89,14 @@ func ErrUnavailable(msg string) *APIError {
 	return baseErr("unavailable", http.StatusServiceUnavailable, true, "https://docs.context-fabric.io/errors/unavailable").with(msg)
 }
 
+// ErrInternal returns a non-retryable 500. The message is not echoed to clients.
+func ErrInternal(msg string) *APIError {
+	if msg == "" {
+		msg = "internal error"
+	}
+	return baseErr("internal_error", http.StatusInternalServerError, false, "https://docs.context-fabric.io/errors/internal").with(msg)
+}
+
 func baseErr(reason string, status int, retryable bool, doc string) *APIError {
 	return &APIError{
 		ReasonCode: reason,

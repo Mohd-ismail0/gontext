@@ -151,8 +151,12 @@ func (s *ApplicationService) requireOrgBootstrap(ctx context.Context, creds port
 	// Existing org path: must manage.
 	_, err := s.Ledger.GetOrganization(ctx, orgID)
 	if err != nil {
-		// New org: platform token or platform admin only.
-		return platform.ErrForbidden("organization bootstrap requires platform credentials")
+		// Only a genuine "not found" means this is a new org; a transient
+		// store error must not be reported as an authorization failure.
+		if ae, ok := platform.AsAPIError(err); ok && ae.ReasonCode == "not_found" {
+			return platform.ErrForbidden("organization bootstrap requires platform credentials")
+		}
+		return platform.ErrUnavailable("organization lookup failed")
 	}
 	return s.requireManage(ctx, principal, orgID, extraScopes)
 }

@@ -89,10 +89,18 @@ func (s *Server) routes() {
 	s.Mux.HandleFunc("POST /v1/organizations/{orgId}/ops/support-bundle", s.auth(s.handleSupportBundle))
 }
 
+// hasCredential reports whether the request carries any authenticatable credential
+// (Bearer token or agent API key). Actual verification happens in the application layer.
+func hasCredential(r *http.Request) bool {
+	if strings.TrimSpace(r.Header.Get("Authorization")) != "" {
+		return true
+	}
+	return strings.TrimSpace(r.Header.Get("X-API-Key")) != ""
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		raw := r.Header.Get("Authorization")
-		if strings.TrimSpace(raw) == "" {
+		if !hasCredential(r) {
 			writeUnauthorized(w, r, s)
 			return
 		}
@@ -102,8 +110,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) authHandler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := r.Header.Get("Authorization")
-		if strings.TrimSpace(raw) == "" {
+		if !hasCredential(r) {
 			writeUnauthorized(w, r, s)
 			return
 		}
@@ -892,7 +899,8 @@ func writeUnauthorized(w http.ResponseWriter, r *http.Request, s *Server) {
 func writeErr(w http.ResponseWriter, err error) {
 	ae, ok := platform.AsAPIError(err)
 	if !ok {
-		ae = platform.ErrUnavailable(err.Error())
+		// Never echo raw internal errors, and never present a bug as a retryable 503.
+		ae = platform.ErrInternal("internal error")
 	}
 	status := ae.HTTPStatus
 	if status == 0 {

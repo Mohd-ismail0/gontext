@@ -677,9 +677,13 @@ func resolve(expr string, payload map[string]any) (any, error) {
 	if expr == "" {
 		return nil, nil
 	}
-	if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) ||
-		(strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
-		return expr[1 : len(expr)-1], nil
+	// Require length >= 2: a lone quote char satisfies both prefix and suffix and
+	// would otherwise slice expr[1:0] (panic) on client-supplied mapping specs.
+	if len(expr) >= 2 {
+		if (strings.HasPrefix(expr, `"`) && strings.HasSuffix(expr, `"`)) ||
+			(strings.HasPrefix(expr, `'`) && strings.HasSuffix(expr, `'`)) {
+			return expr[1 : len(expr)-1], nil
+		}
 	}
 	if strings.HasPrefix(expr, "$.") || strings.HasPrefix(expr, "$[") {
 		return dig(payload, strings.TrimPrefix(expr, "$")), nil

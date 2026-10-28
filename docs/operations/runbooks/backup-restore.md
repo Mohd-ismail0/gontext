@@ -18,7 +18,7 @@ Host-managed backup per [ADR 0016](../../adr/0016-compose-first-production-relea
    - `OPENFGA_API_URL`, `OPENFGA_STORE_ID`, `OPENFGA_API_TOKEN`
 3. **Run backup**:
    ```bash
-   make backup BACKUP_DIR=/var/backups/context-fabric/$(date -u +%Y%m%dT%H%M%SZ)
+   make backup OUT_DIR=/var/backups/context-fabric/$(date -u +%Y%m%dT%H%M%SZ)
    ```
 4. **Verify manifest** — `manifest.json` includes `product_version`, `migration_head`, and bucket list.
 5. **Store offline** — encrypt at rest; restrict access to platform + security roles.
@@ -40,7 +40,7 @@ Host-managed backup per [ADR 0016](../../adr/0016-compose-first-production-relea
    ```bash
    export POSTGRES_ADMIN_DSN=...
    export S3_BUCKET_RAW=... S3_BUCKET_DERIVED=... S3_BUCKET_QUARANTINE=...
-   make restore BACKUP_DIR=/var/backups/context-fabric/<timestamp>
+   make restore IN_DIR=/var/backups/context-fabric/<timestamp>
    ```
 4. **OpenFGA** — import model/tuples from bundle before traffic.
 5. **Reconcile** — `scripts/reconcile.sh` (included in restore script).

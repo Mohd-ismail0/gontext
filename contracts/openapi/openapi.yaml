@@ -1328,6 +1328,15 @@ components:
     Error:
       type: object
       additionalProperties: false
+      required: [error]
+      description: Stable error envelope returned on all 4xx/5xx responses.
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetail"
+
+    ErrorDetail:
+      type: object
+      additionalProperties: false
       required:
         - reason_code
         - message
@@ -1347,16 +1356,13 @@ components:
           type: string
         retryable:
           type: boolean
-        retry_after:
+        retry_after_seconds:
           type: integer
           minimum: 0
           description: Seconds to wait before retry when retryable.
-        documentation_url:
+        doc_url:
           type: string
           format: uri
-        details:
-          type: object
-          additionalProperties: true
 
     HealthStatus:
       type: object

@@ -21,7 +21,7 @@ A release candidate must pass every gate below or document an explicit waiver.
 | P0-5 | **Secrets required** | `WEBHOOK_SIGNING_SECRET`, `DELETION_SIGNING_SECRET` set for non-demo; no fallback signing material | `cmd/context-fabric/main.go` | Startup + doctor |
 | P0-6 | **Migration parity** | `migrations/` matches embedded `internal/migrate/migrations/` | CI diff | Automated |
 | P0-7 | **Restore drill** | Host-managed backup/restore meets RPO ≤30m / RTO ≤60m; tombstones survive restore | `scripts/backup.sh`, `scripts/restore.sh`, runbook | Manual quarterly + CI optional |
-| P0-8 | **Signed digest** | Published image cosign-verified, SBOM attached, zero unwaived CRITICAL CVEs | `.github/workflows/release.yml` | Release workflow |
+| P0-8 | **Signed digest** | Published image cosign-verified, SBOM generated (image-attach/attest + CVE gate pending) | `.github/workflows/release.yml` | Release workflow |
 
 ## P1 — correctness and operability (waivable with expiry)
 
@@ -56,7 +56,7 @@ A release candidate must pass every gate below or document an explicit waiver.
 | `contracts` | JSON Schema, OpenAPI, OpenFGA, profile YAML validation |
 | `integration` | Live Postgres/MinIO/NATS/OpenFGA/Dex (Linux only) |
 | `compose-smoke` | Pull/build image, starter overlay, health + OIDC smoke |
-| `security` | govulncheck, Trivy image scan |
+| `security` | govulncheck (pinned); container CVE scan not yet wired |
 | `release` | Multi-arch push, cosign, SBOM (tags only) |
 
 ## How to run locally
@@ -64,7 +64,7 @@ A release candidate must pass every gate below or document an explicit waiver.
 ```bash
 make release-check    # aggregate pre-release gates
 go test -race -count=1 ./...
-go test -tags=integration ./...   # requires integration stack
+# integration-tagged tests do not exist yet (CI runs the in-process conformance suite)
 cf conformance run --suite contracts/conformance/suite.yaml
 make compose-starter-smoke
 ```

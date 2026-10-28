@@ -97,15 +97,40 @@ func (c *CredentialStore) Revoke(ctx context.Context, orgID, credentialID string
 	return nil
 }
 
-// RotateAgentCredential revokes existing credentials for the agent and issues a new one.
+// RotateAgentCredential revokes existing credentials for the agent and issues a
+// new one atomically: if either step fails the agent keeps its previous credential
+// instead of being left with none.
 func (c *CredentialStore) RotateAgentCredential(ctx context.Context, req ports.CreateAgentCredentialRequest) (ports.AgentCredential, error) {
-	_ = c.pool.WithTenant(ctx, req.OrgID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
+	if req.OrgID == "" || req.AgentID == "" {
+		return ports.AgentCredential{}, platform.ErrValidation("org and agent required")
+	}
+	secret, err := randomSecret()
+	if err != nil {
+		return ports.AgentCredential{}, err
+	}
+	id := platform.NewEventID()
+	sum := sha256.Sum256([]byte(secret))
+	h := hex.EncodeToString(sum[:])
+	now := time.Now().UTC()
+	err = c.pool.WithTenant(ctx, req.OrgID, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
 UPDATE agent_credentials SET revoked=true
-WHERE organization_id=$1 AND agent_id=$2 AND revoked=false`, req.OrgID, req.AgentID)
+WHERE organization_id=$1 AND agent_id=$2 AND revoked=false`, req.OrgID, req.AgentID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+INSERT INTO agent_credentials (id, organization_id, agent_id, owner_id, secret_hash, expires_at, revoked, created_at)
+VALUES ($1,$2,$3,$4,$5,$6,false,$7)`,
+			id, req.OrgID, req.AgentID, req.OwnerID, h, req.ExpiresAt, now)
 		return err
 	})
-	return c.CreateAgentCredential(ctx, req)
+	if err != nil {
+		return ports.AgentCredential{}, err
+	}
+	return ports.AgentCredential{
+		CredentialID: id, AgentID: req.AgentID, OrgID: req.OrgID,
+		Secret: secret, ExpiresAt: req.ExpiresAt, CreatedAt: now,
+	}, nil
 }
 
 func randomSecret() (string, error) {

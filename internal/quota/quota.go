@@ -2,6 +2,7 @@ package quota
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -49,10 +50,11 @@ func DefaultLimits() Limits {
 
 // Limiter is an in-memory token-bucket quota enforcer.
 type Limiter struct {
-	mu      sync.Mutex
-	limits  Limits
-	buckets map[string]*bucket
-	now     func() time.Time
+	mu        sync.Mutex
+	limits    Limits
+	orgLimits map[string]Limits
+	buckets   map[string]*bucket
+	now       func() time.Time
 }
 
 type bucket struct {
@@ -68,9 +70,30 @@ func NewLimiter(limits Limits) *Limiter {
 		limits.Burst = 1
 	}
 	return &Limiter{
-		limits:  limits,
-		buckets: make(map[string]*bucket),
-		now:     time.Now,
+		limits:    limits,
+		orgLimits: make(map[string]Limits),
+		buckets:   make(map[string]*bucket),
+		now:       time.Now,
+	}
+}
+
+// SetOrgLimits applies org-specific limits (overriding defaults) and resets that
+// org's buckets so the new limits take effect immediately.
+func (l *Limiter) SetOrgLimits(orgID string, limits Limits) {
+	if strings.TrimSpace(orgID) == "" {
+		return
+	}
+	if limits.Burst <= 0 {
+		limits.Burst = 1
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.orgLimits[orgID] = limits
+	prefix := orgID + "|"
+	for k := range l.buckets {
+		if strings.HasPrefix(k, prefix) {
+			delete(l.buckets, k)
+		}
 	}
 }
 
@@ -79,7 +102,15 @@ func (l *Limiter) Allow(key Key) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	rate := l.rateFor(key.Op)
+	limits := l.limits
+	if ov, ok := l.orgLimits[key.OrgID]; ok {
+		limits = ov
+	}
+	burst := limits.Burst
+	if burst <= 0 {
+		burst = 1
+	}
+	rate := rateForLimits(limits, key.Op)
 	if rate <= 0 {
 		return nil
 	}
@@ -87,9 +118,12 @@ func (l *Limiter) Allow(key Key) error {
 	b, ok := l.buckets[id]
 	now := l.now()
 	if !ok {
+		if len(l.buckets) >= maxBuckets {
+			l.evictIdleLocked(now)
+		}
 		b = &bucket{
-			tokens:     l.limits.Burst,
-			capacity:   l.limits.Burst,
+			tokens:     burst,
+			capacity:   burst,
 			refillRate: rate / 60.0,
 			last:       now,
 		}
@@ -114,15 +148,28 @@ func (l *Limiter) Allow(key Key) error {
 	return nil
 }
 
-func (l *Limiter) rateFor(op Operation) float64 {
+func rateForLimits(l Limits, op Operation) float64 {
 	switch op {
 	case OpSearch:
-		return l.limits.SearchPerMinute
+		return l.SearchPerMinute
 	case OpIntake:
-		return l.limits.IntakePerMinute
+		return l.IntakePerMinute
 	case OpExport:
-		return l.limits.ExportPerMinute
+		return l.ExportPerMinute
 	default:
 		return 0
+	}
+}
+
+// maxBuckets bounds the in-memory bucket map (per distinct org/source/principal).
+const maxBuckets = 100000
+
+// evictIdleLocked drops buckets that have not been touched recently so the map
+// cannot grow without bound.
+func (l *Limiter) evictIdleLocked(now time.Time) {
+	for k, b := range l.buckets {
+		if now.Sub(b.last) > 10*time.Minute {
+			delete(l.buckets, k)
+		}
 	}
 }

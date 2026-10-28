@@ -261,6 +261,9 @@ func (p *OIDCProvider) ensureMeta(ctx context.Context) error {
 	if err := json.NewDecoder(res.Body).Decode(&meta); err != nil {
 		return err
 	}
+	if meta.Issuer != "" && p.cfg.Issuer != "" && meta.Issuer != p.cfg.Issuer {
+		return fmt.Errorf("discovery issuer %q does not match configured issuer %q", meta.Issuer, p.cfg.Issuer)
+	}
 	p.mu.Lock()
 	p.meta = meta
 	if meta.JWKSURI != "" {
@@ -438,7 +441,12 @@ func parseAndVerifyJWT(token string, keyFn func(kid, alg string) (any, error), w
 	}
 
 	now := time.Now().Unix()
-	if exp, ok := claimInt64(claims, "exp"); ok && now >= exp {
+	exp, ok := claimInt64(claims, "exp")
+	if !ok {
+		// Fail closed: a token without an expiry never becomes invalid.
+		return jwtHeader{}, nil, fmt.Errorf("token missing exp")
+	}
+	if now >= exp {
 		return jwtHeader{}, nil, fmt.Errorf("token expired")
 	}
 	if nbf, ok := claimInt64(claims, "nbf"); ok && now < nbf {

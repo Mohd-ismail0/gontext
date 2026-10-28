@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xsama/context-fabric/internal/audit"
@@ -115,7 +116,7 @@ func (s *Service) Run(ctx context.Context, req Request) (CompletionManifest, err
 		ResourceID: req.ResourceID,
 		OrgID:      req.OrgID,
 		State:      "TOMBSTONED",
-		Sequence:   time.Now().UnixNano(),
+		Sequence:   now.UnixNano(),
 		Attributes: map[string]string{"deletion_id": deletionID, "reason": req.Reason},
 		ObservedAt: now,
 		CreatedAt:  now,
@@ -312,11 +313,15 @@ func (s *Service) now() time.Time {
 	return time.Now().UTC()
 }
 
+// splitEvidenceRef parses evidence refs of the form "key@version" or "key#version".
+// Ingest writes "key@version" (see internal/ingest); export accepts both; deletion
+// must too or purge silently fails with a bogus key.
 func splitEvidenceRef(ref string) (key, version string) {
-	for i := 0; i < len(ref); i++ {
-		if ref[i] == '#' {
-			return ref[:i], ref[i+1:]
-		}
+	if i := strings.IndexByte(ref, '@'); i >= 0 {
+		return ref[:i], ref[i+1:]
+	}
+	if i := strings.IndexByte(ref, '#'); i >= 0 {
+		return ref[:i], ref[i+1:]
 	}
 	return ref, ""
 }

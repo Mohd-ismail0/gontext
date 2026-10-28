@@ -3,6 +3,8 @@ package memory
 import (
 	"context"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,20 +176,41 @@ func (s *Store) GetRecord(_ context.Context, orgID, resourceID string) (ports.Re
 	return r, nil
 }
 
-func (s *Store) ListRecords(_ context.Context, orgID string, limit int, _ string) ([]ports.Record, string, error) {
+func (s *Store) ListRecords(_ context.Context, orgID string, limit int, cursor string) ([]ports.Record, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 50
 	}
-	out := make([]ports.Record, 0, limit)
+	all := make([]ports.Record, 0, len(s.records[orgID]))
 	for _, r := range s.records[orgID] {
-		out = append(out, r)
-		if len(out) >= limit {
-			break
+		all = append(all, r)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].CreatedAt.Equal(all[j].CreatedAt) {
+			return all[i].CreatedAt.Before(all[j].CreatedAt)
+		}
+		return all[i].ResourceID < all[j].ResourceID
+	})
+	offset := 0
+	if cursor != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			offset = n
 		}
 	}
-	return out, "", nil
+	if offset >= len(all) {
+		return []ports.Record{}, "", nil
+	}
+	end := offset + limit
+	if end > len(all) {
+		end = len(all)
+	}
+	out := append([]ports.Record(nil), all[offset:end]...)
+	next := ""
+	if end < len(all) {
+		next = strconv.Itoa(end)
+	}
+	return out, next, nil
 }
 
 func (s *Store) AppendRevision(_ context.Context, _ ports.Tx, rev ports.Revision) error {
@@ -945,22 +968,44 @@ func (s *Store) AppendChange(_ context.Context, ev ports.ChangeEvent) error {
 	return nil
 }
 
-// ListChanges returns change events after cursor.
+// ListChanges returns change events in (occurred_at, event_id) order after the
+// composite cursor ("<RFC3339Nano>|<id>"), matching the Postgres adapter.
 func (s *Store) ListChanges(_ context.Context, orgID, cursor string, limit int) ([]ports.ChangeEvent, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if limit <= 0 {
 		limit = 50
 	}
-	all := s.changes[orgID]
+	var afterTime time.Time
+	afterID := ""
+	hasCursor := false
+	if cursor != "" {
+		if i := strings.IndexByte(cursor, '|'); i >= 0 {
+			if t, err := time.Parse(time.RFC3339Nano, cursor[:i]); err == nil {
+				afterTime = t
+				afterID = cursor[i+1:]
+				hasCursor = true
+			}
+		}
+	}
+	all := append([]ports.ChangeEvent(nil), s.changes[orgID]...)
+	sort.Slice(all, func(i, j int) bool {
+		if !all[i].OccurredAt.Equal(all[j].OccurredAt) {
+			return all[i].OccurredAt.Before(all[j].OccurredAt)
+		}
+		return all[i].EventID < all[j].EventID
+	})
 	out := make([]ports.ChangeEvent, 0, limit)
 	next := cursor
 	for _, ev := range all {
-		if cursor != "" && ev.Cursor <= cursor {
-			continue
+		if hasCursor {
+			if ev.OccurredAt.Before(afterTime) ||
+				(ev.OccurredAt.Equal(afterTime) && ev.EventID <= afterID) {
+				continue
+			}
 		}
 		out = append(out, ev)
-		next = ev.Cursor
+		next = ev.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + ev.EventID
 		if len(out) >= limit {
 			break
 		}

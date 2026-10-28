@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG GO_VERSION=1.26.5
+ARG GO_VERSION=1.26.10
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG VERSION=dev
@@ -13,7 +13,7 @@ WORKDIR /src
 
 COPY go.mod go.sum* ./
 RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download || true
+    go mod download
 
 COPY . .
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -54,6 +54,8 @@ ENV CONTEXT_FABRIC_VERSION=${VERSION}
 
 USER nonroot:nonroot
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD ["wget", "-qO-", "http://127.0.0.1:8080/health/ready"]
 ENTRYPOINT ["/usr/local/bin/context-fabric"]
 # Role selected via CMD: serve | worker | connector | migrate | bootstrap | doctor | backup | restore | reconcile | all
 CMD ["serve"]
