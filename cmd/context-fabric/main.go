@@ -874,8 +874,11 @@ func runDoctor() error {
 		}
 	}
 
+	roleEnv := strings.ToLower(strings.TrimSpace(os.Getenv("CONTEXT_FABRIC_ROLE")))
 	if cfg.AllowMemoryAuth() {
 		fmt.Println("doctor: oidc skipped (memory/demo auth)")
+	} else if roleEnv == "worker" {
+		fmt.Println("doctor: oidc skipped (worker does not serve identity; IdP may be unreachable on the data network)")
 	} else {
 		issuer := strings.TrimSpace(cfg.OIDC.Issuer)
 		if issuer == "" {
@@ -904,13 +907,9 @@ func runDoctor() error {
 			return fmt.Errorf("OPENFGA_API_TOKEN required for non-demo profiles")
 		}
 		fmt.Println("doctor: openfga api token set")
-		modelID := strings.TrimSpace(firstEnv("OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID", ""))
+		modelID := strings.TrimSpace(cfg.OpenFGA.ModelID)
 		if config.IsOpenFGAModelPlaceholder(modelID) {
-			if path := strings.TrimSpace(os.Getenv("OPENFGA_MODEL_ID_FILE")); path != "" {
-				if b, err := os.ReadFile(path); err == nil {
-					modelID = strings.TrimSpace(string(b))
-				}
-			}
+			modelID = strings.TrimSpace(cfg.AuthzModelID)
 		}
 		if config.IsOpenFGAModelPlaceholder(modelID) {
 			return fmt.Errorf("OPENFGA_MODEL_ID unset or placeholder; run bootstrap to write and pin a model")
@@ -971,14 +970,11 @@ func writeBootstrapRuntimeFile(path, content string) error {
 	if path == "" || content == "" {
 		return nil
 	}
+	if err := config.WriteSecretFile(path, content); err != nil {
+		return err
+	}
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o775); err != nil {
-		return err
-	}
 	_ = os.Chown(dir, bootstrapRuntimeUID, bootstrapRuntimeGID)
-	if err := os.WriteFile(path, []byte(content+"\n"), 0o644); err != nil {
-		return err
-	}
 	_ = os.Chown(path, bootstrapRuntimeUID, bootstrapRuntimeGID)
 	return nil
 }

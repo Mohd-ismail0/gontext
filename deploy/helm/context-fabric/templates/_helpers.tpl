@@ -167,4 +167,9 @@ app.kubernetes.io/instance: {{ .Release.Name }}
     secretKeyRef:
       name: {{ .Values.secrets.webhookSigning.existingSecret }}
       key: {{ .Values.secrets.webhookSigning.key }}
+- name: DELETION_SIGNING_SECRET
+  valueFrom:
+    secretKeyRef:
+      name: {{ .Values.secrets.deletionSigning.existingSecret }}
+      key: {{ .Values.secrets.deletionSigning.key }}
 {{- end -}}

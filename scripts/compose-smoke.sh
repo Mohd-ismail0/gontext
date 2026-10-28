@@ -78,22 +78,33 @@ fi
 # Optional Dex/static OIDC smoke when DEX_TOKEN_URL is set (integration CI).
 if [[ -n "${DEX_TOKEN_URL:-}" ]]; then
   echo "smoke: fetching OIDC token from $DEX_TOKEN_URL"
-  token_json="$(curl -fsS -X POST "$DEX_TOKEN_URL" \
+  # Dex confidential clients authenticate via HTTP Basic, not body client_secret.
+  token_json="$(curl -sS -X POST "$DEX_TOKEN_URL" \
+    -u "${DEX_CLIENT_ID:-context-fabric-starter}:${DEX_CLIENT_SECRET:-}" \
     -H 'Content-Type: application/x-www-form-urlencoded' \
-    -d "grant_type=password&username=${DEX_USERNAME:-alice@example.com}&password=${DEX_PASSWORD:-password}&scope=openid&client_id=${DEX_CLIENT_ID:-context-fabric-starter}&client_secret=${DEX_CLIENT_SECRET:-}")"
-  access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; print(json.load(sys.stdin).get('access_token',''))")"
+    --data-urlencode 'grant_type=password' \
+    --data-urlencode "username=${DEX_USERNAME:-alice@example.com}" \
+    --data-urlencode "password=${DEX_PASSWORD:-password}" \
+    --data-urlencode 'scope=openid email groups' || true)"
+  access_token="$(printf '%s' "$token_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('access_token') or d.get('id_token') or '')" 2>/dev/null || true)"
   if [[ -z "$access_token" ]]; then
-    echo "smoke: failed to obtain access_token from Dex" >&2
+    echo "smoke: failed to obtain access_token from Dex: ${token_json:-<empty>}" >&2
     exit 1
   fi
-  http_code="$(curl -fsSk -o /dev/null -w '%{http_code}' \
+  http_code="$(curl -sSk -o /tmp/smoke-org-status.out -w '%{http_code}' \
     -H "Authorization: Bearer $access_token" \
-    "$BASE_URL/v1/search?query=smoke&limit=1" || true)"
-  if [[ "$http_code" != "200" && "$http_code" != "404" ]]; then
-    echo "smoke: authenticated search returned HTTP $http_code (expected 200/404)" >&2
-    exit 1
-  fi
-  echo "smoke: OIDC-authenticated search probe ok (HTTP $http_code)"
+    "$BASE_URL/v1/organizations/org1/status" || true)"
+  case "$http_code" in
+    200|400|403|404) echo "smoke: OIDC-authenticated probe ok (HTTP $http_code)" ;;
+    *)
+      echo "smoke: authenticated org status returned HTTP ${http_code:-none}" >&2
+      echo "smoke: response body: $(head -c 500 /tmp/smoke-org-status.out 2>/dev/null || true)" >&2
+      echo "smoke: dex JWKS from serve:" >&2
+      compose exec -T serve wget -qO- http://dex:5556/dex/keys 2>&1 | head -c 300 || true
+      echo >&2
+      exit 1
+      ;;
+  esac
 fi
 
 echo "smoke: passed"

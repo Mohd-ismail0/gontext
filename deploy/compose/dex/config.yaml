@@ -3,16 +3,25 @@ storage:
   type: memory
 web:
   http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+  passwordConnector: local
+  grantTypes:
+    - authorization_code
+    - refresh_token
+    - password
 staticClients:
   - id: context-fabric-starter
     secret: integration-dex-secret
     name: Context Fabric Starter
+    public: false
     redirectURIs:
       - http://localhost/callback
 enablePasswordDB: true
 staticPasswords:
   - email: alice@example.com
-    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzGfvRKNY8O6CkmW8cW6
+    # bcrypt cost 10 of the string "password" (verified with golang.org/x/crypto/bcrypt)
+    hash: '$2a$10$ysxvJj/NwDPNg9dTol1E/uavwy7kNff1qZn6fi360AUDPtLpo/4pK'
     username: alice
     userID: alice
     groups:

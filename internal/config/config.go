@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -221,6 +222,14 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	openfgaModelID, err := secretValue("OPENFGA_MODEL_ID")
+	if err != nil {
+		return Config{}, err
+	}
+	authzModelID := strings.TrimSpace(os.Getenv("AUTHZ_MODEL_ID"))
+	if authzModelID == "" {
+		authzModelID = openfgaModelID
+	}
 
 	overlayPath := strings.TrimSpace(os.Getenv("CONTEXT_FABRIC_CONFIG"))
 	if overlayPath != "" {
@@ -233,7 +242,7 @@ func LoadFromEnv() (Config, error) {
 		Profile:      profile,
 		ListenAddr:   firstEnv(":8080", "LISTEN_ADDR", "CONTEXT_FABRIC_LISTEN_ADDR"),
 		LogLevel:     firstEnv("info", "LOG_LEVEL", "CONTEXT_FABRIC_LOG_LEVEL"),
-		AuthzModelID: firstEnv("", "AUTHZ_MODEL_ID", "OPENFGA_MODEL_ID"),
+		AuthzModelID: authzModelID,
 		Secrets: Secrets{
 			WebhookSigningSecret:   webhookSecret,
 			DeletionSigningSecret:  deletionSecret,
@@ -277,7 +286,7 @@ func LoadFromEnv() (Config, error) {
 			APIURL:         firstEnv("", "OPENFGA_API_URL", "OPENFGA_URL"),
 			APIToken:       openfgaToken,
 			StoreID:        openfgaStoreID,
-			ModelID:        firstEnv("", "OPENFGA_MODEL_ID", "AUTHZ_MODEL_ID"),
+			ModelID:        openfgaModelID,
 			ConnectionMode: modeEnv("OPENFGA_CONNECTION_MODE", defaultMode()),
 		},
 		OIDC: OIDCConfig{
@@ -506,11 +515,52 @@ func IsPlaceholderValue(val string) bool {
 // IsOpenFGAModelPlaceholder reports model pins that bootstrap should write and replace.
 func IsOpenFGAModelPlaceholder(id string) bool {
 	switch strings.TrimSpace(id) {
-	case "", "demo-model-v1", "starter-model-v1":
+	case "", "demo-model-v1", "starter-model-v1", "xsama-model-v1", "scaled-model-v1":
 		return true
 	default:
 		return false
 	}
+}
+
+// WriteSecretFile writes value to path, creating parent directories. Used by
+// bootstrap to persist OpenFGA store/model pins onto a shared volume.
+func WriteSecretFile(path, value string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("empty path")
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o775); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, ".write-*")
+	if err != nil {
+		return fmt.Errorf("create temp in %s: %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	payload := strings.TrimSpace(value) + "\n"
+	if _, err := tmp.WriteString(payload); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o644); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", tmpName, path, err)
+	}
+	cleanup = false
+	return nil
 }
 
 // envFile returns the value of key, or the trimmed contents of key+"_FILE" when key is unset.
