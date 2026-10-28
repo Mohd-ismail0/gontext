@@ -44,6 +44,9 @@ Thumbs.db
 tmp/
 .temp/
 
+# Graphify local knowledge graph (generated)
+graphify-out/
+
 # Node / TypeScript SDK
 sdk/typescript/node_modules/
 sdk/typescript/dist/
