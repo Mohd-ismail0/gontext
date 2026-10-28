@@ -13,6 +13,8 @@
 !**/.env.starter.example
 *.pem
 *.key
+*.creds
+!*.creds.example
 
 # Coverage / test output
 coverage/
@@ -46,6 +48,9 @@ tmp/
 
 # Graphify local knowledge graph (generated)
 graphify-out/
+
+# Agent / editor tooling local state
+.commandcode/
 
 # Node / TypeScript SDK
 sdk/typescript/node_modules/
